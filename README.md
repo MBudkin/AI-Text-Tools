@@ -3,7 +3,6 @@
 AI Text Tools is a Chrome extension designed to enhance productivity by offering AI-based context menu options for various text manipulations like translation, summarization, and explanation.
 
 ## Features
-- **Dynamic Context Menus**: Automatically adapts based on the selected text.
 - **Customizable Prompts**: Easily add, edit, or delete context menu items through the settings page.
 - **User-Friendly UI**: A clean and intuitive options page for managing API keys and settings.
 
