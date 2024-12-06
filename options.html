@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Настройки AI Text Tools</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    label, input, select, textarea { display: block; margin: 10px 0; }
+    #menu-items { margin-top: 20px; }
+    #menu-items label { font-weight: bold; margin-top: 20px; }
+    .menu-item { display: flex; align-items: center; margin-bottom: 10px; }
+    .menu-item input[type="text"] { flex: 1; margin-right: 10px; }
+    .menu-item textarea { flex: 2; margin-right: 10px; }
+    .menu-item button { margin-left: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Настройки</h1>
+  
+  <p>Здесь вы можете настроить параметры работы расширения и управлять пунктами контекстного меню.</p>
+  
+  <label for="apiServer">Сервер API OpenAI:</label>
+  <input id="apiServer" type="text" placeholder="https://api.openai.com/v1" />
+  
+  <label for="apiKey">API-ключ OpenAI:</label>
+  <input id="apiKey" type="password" placeholder="Введите ваш API-ключ" />
+  
+  <label for="apiModel">Модель API:</label>
+  <select id="apiModel">
+    <option value="gpt-4">GPT-4</option>
+    <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+	<option value="gpt-4o-mini">GPT-4o-mini</option>
+  </select>
+  
+  <h2>Пункты контекстного меню</h2>
+  <p>
+    Чтобы добавить новый пункт контекстного меню, нажмите кнопку "Добавить пункт меню".<br>
+    Если вы хотите, чтобы пункт контекстного меню отображался при выделенном тексте, включите в его промпт плейсхолдер <code>{{selectionText}}</code>.<br><br>
+    Важно: пункты меню, не содержащие <code>{{selectionText}}</code>, не появятся в контекстном меню.
+	Чтобы обратиться к AI без использования выделенного текста, нажмите правой кнопкой мыши в свободном месте и выберите пункт "Спросить AI".
+  </p>
+  
+  <div id="menu-items"></div>
+  <button id="add-menu-item">Добавить пункт меню</button>
+  
+  <button id="save">Сохранить</button>
+  
+  <script src="options.js"></script>
+</body>
+</html>
