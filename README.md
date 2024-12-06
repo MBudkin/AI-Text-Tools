@@ -9,11 +9,11 @@ AI Text Tools is a Chrome extension designed to enhance productivity by offering
 
 ## Screenshots
 ### Main Features
-_(Insert screenshots here, e.g., `assets/screenshot1.png`)_
+![Main Features](assets/screenshot1.png)
 ### Options Page
-_(Insert screenshots here, e.g., `assets/screenshot2.png`)_
+![Options Page](assets/screenshot2.png)
 ### AI Results Popup
-_(Insert screenshots here, e.g., `assets/screenshot3.png`)_
+![AI Results Popup](assets/screenshot3.png)
 
 ## Installation
 - Open your Chrome browser and navigate to chrome://extensions/.
