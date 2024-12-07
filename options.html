@@ -5,13 +5,21 @@
   <title>Настройки AI Text Tools</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
-    label, input, select, textarea { display: block; margin: 10px 0; }
+    label, input, select, textarea, button { display: block; margin: 10px 0; }
     #menu-items { margin-top: 20px; }
     #menu-items label { font-weight: bold; margin-top: 20px; }
     .menu-item { display: flex; align-items: center; margin-bottom: 10px; }
     .menu-item input[type="text"] { flex: 1; margin-right: 10px; }
     .menu-item textarea { flex: 2; margin-right: 10px; }
     .menu-item button { margin-left: 5px; }
+    #import-section { margin-top: 20px; }
+    .move-buttons { display: flex; flex-direction: column; }
+    .move-buttons button {
+      padding: 2px 5px;
+      margin-bottom: 2px;
+      cursor: pointer;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -29,7 +37,7 @@
   <select id="apiModel">
     <option value="gpt-4">GPT-4</option>
     <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-	<option value="gpt-4o-mini">GPT-4o-mini</option>
+    <option value="gpt-4o-mini">GPT-4o-mini</option>
   </select>
   
   <h2>Пункты контекстного меню</h2>
@@ -37,13 +45,23 @@
     Чтобы добавить новый пункт контекстного меню, нажмите кнопку "Добавить пункт меню".<br>
     Если вы хотите, чтобы пункт контекстного меню отображался при выделенном тексте, включите в его промпт плейсхолдер <code>{{selectionText}}</code>.<br><br>
     Важно: пункты меню, не содержащие <code>{{selectionText}}</code>, не появятся в контекстном меню.
-	Чтобы обратиться к AI без использования выделенного текста, нажмите правой кнопкой мыши в свободном месте и выберите пункт "Спросить AI".
+    Чтобы обратиться к AI без использования выделенного текста, нажмите правой кнопкой мыши в свободном месте и выберите пункт "Спросить AI".
   </p>
   
   <div id="menu-items"></div>
   <button id="add-menu-item">Добавить пункт меню</button>
   
   <button id="save">Сохранить</button>
+  
+  <!-- Секция для экспорта и импорта настроек -->
+  <div id="import-section">
+    <h2>Экспорт и импорт настроек</h2>
+    <button id="export">Экспортировать настройки</button>
+    
+    <label for="import-file">Импортировать настройки:</label>
+    <input type="file" id="import-file" accept=".json" />
+    <button id="import">Импортировать</button>
+  </div>
   
   <script src="options.js"></script>
 </body>
