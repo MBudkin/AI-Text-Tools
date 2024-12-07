@@ -79,7 +79,7 @@ function showLoadingIndicator(tabId) {
         indicator.style.zIndex = 10000;
         indicator.style.fontFamily = "Arial, sans-serif";
         indicator.style.fontSize = "14px";
-        indicator.style.color = "#151515"; // Белый текст
+        indicator.style.color = "#151515"; // Темный текст
         indicator.style.textAlign = "center";
         indicator.style.minWidth = "200px";
         indicator.style.minHeight = "50px";
@@ -124,85 +124,154 @@ function removeLoadingIndicator(tabId) {
   });
 }
 
-// Отображение результата или ошибки
+// Отображение результата или ошибки с поддержкой Markdown
 function displayModal(tabId, message, isError = false) {
+  // Загружаем библиотеку Marked
   chrome.scripting.executeScript({
     target: { tabId },
-    func: (content, isError) => {
-      const existingModal = document.getElementById("ai-result-modal");
-      if (existingModal) {
-        existingModal.remove();
-      }
+    files: ['marked.min.js'],
+  }, () => {
+    // После загрузки Marked создаём модальное окно
+    chrome.scripting.executeScript({
+      target: { tabId },
+      func: (content, isError) => {
+        // Удаляем существующее модальное окно, если оно есть
+        const existingModal = document.getElementById("ai-result-modal");
+        if (existingModal) {
+          existingModal.remove();
+        }
 
-      const modal = document.createElement("div");
-      modal.id = "ai-result-modal";
+        // Создаём модальное окно
+        const modal = document.createElement("div");
+        modal.id = "ai-result-modal";
 
-      // Стили для модального окна
-      modal.style.position = "fixed";
-      modal.style.top = "50%";
-      modal.style.left = "50%";
-      modal.style.transform = "translate(-50%, -50%)";
-      modal.style.backgroundColor = isError ? "rgba(255, 152, 152, 0.99)" : "rgba(220, 226, 226, 0.99)"; // Полупрозрачный красный для ошибок и тёмный для обычных сообщений
-      modal.style.border = "1px solid #ffffff"; // Белая рамка
-      modal.style.padding = "20px";
-      modal.style.zIndex = 10000;
-      modal.style.maxWidth = "80%";
-      modal.style.maxHeight = "80%";
-      modal.style.overflow = "auto";
-      modal.style.fontFamily = "Arial, sans-serif";
-      modal.style.fontSize = "14px";
-      modal.style.color = "#151515"; // Белый текст
-      modal.style.borderRadius = "8px"; // Закругленные углы
-      modal.style.boxShadow = "0 0 10px rgba(0, 0, 0, 0.5)"; // Тень для выделения
+        // Стили для модального окна
+        modal.style.position = "fixed";
+        modal.style.top = "50%";
+        modal.style.left = "50%";
+        modal.style.transform = "translate(-50%, -50%)";
+        modal.style.backgroundColor = isError ? "rgba(255, 152, 152, 0.99)" : "rgba(220, 226, 226, 0.99)"; // Полупрозрачный красный для ошибок и светлый для обычных сообщений
+        modal.style.border = "1px solid #ffffff"; // Белая рамка
+        modal.style.padding = "20px";
+        modal.style.zIndex = 10000;
+        modal.style.maxWidth = "80%";
+        modal.style.maxHeight = "80%";
+        modal.style.overflow = "auto";
+        modal.style.fontFamily = "Arial, sans-serif";
+        modal.style.fontSize = "14px";
+        modal.style.color = "#151515"; // Белый текст
+        modal.style.borderRadius = "8px"; // Закругленные углы
+        modal.style.boxShadow = "0 0 10px rgba(0, 0, 0, 0.5)"; // Тень для выделения
 
-      // Создаем контейнер для содержимого
-      const contentContainer = document.createElement("div");
-      contentContainer.style.marginBottom = "20px";
-      contentContainer.innerText = content;
+        // Создаём контейнер для содержимого
+        const contentContainer = document.createElement("div");
+        contentContainer.style.marginBottom = "20px";
+        contentContainer.innerHTML = marked.parse(content); // Парсинг Markdown
 
-      // Кнопка "Копировать"
-      const copyButton = document.createElement("button");
-      copyButton.innerText = "Копировать";
-      copyButton.style.display = "inline-block";
-      copyButton.style.marginRight = "10px";
-      copyButton.style.padding = "5px 10px";
-      copyButton.style.cursor = "pointer";
-      copyButton.style.border = "none";
-      copyButton.style.borderRadius = "4px";
-      copyButton.style.backgroundColor = "#4CAF50"; // Зеленая кнопка
-      copyButton.style.color = "#ffffff";
-      copyButton.addEventListener("click", () => {
-        navigator.clipboard.writeText(content).then(() => {
-          const originalText = copyButton.innerText;
-          copyButton.innerText = "Скопировано";
-          setTimeout(() => {
-            copyButton.innerText = originalText;
-          }, 1000);
-        }).catch(err => {
-          alert("Ошибка при копировании текста: " + err);
-        });
-      });
+		// Кнопка "Копировать"
+		const copyButton = document.createElement("button");
+		copyButton.innerText = "Копировать";
+		copyButton.style.display = "inline-block";
+		copyButton.style.marginRight = "10px";
+		copyButton.style.padding = "5px 10px";
+		copyButton.style.cursor = "pointer";
+		copyButton.style.border = "none";
+		copyButton.style.borderRadius = "4px";
+		copyButton.style.backgroundColor = "#4CAF50"; // Зеленая кнопка
+		copyButton.style.color = "#ffffff";
+		copyButton.addEventListener("click", () => {
+		  if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(content).then(() => {
+			  const originalText = copyButton.innerText;
+			  copyButton.innerText = "Скопировано";
+			  setTimeout(() => {
+				copyButton.innerText = originalText;
+			  }, 1000);
+			}).catch(err => {
+			  alert("Ошибка при копировании текста: " + err);
+			});
+		  } else {
+			// Резервный метод копирования
+			try {
+			  const textarea = document.createElement("textarea");
+			  textarea.value = content;
+			  // Сделать textarea невидимой
+			  textarea.style.position = "fixed";
+			  textarea.style.top = "-9999px";
+			  document.body.appendChild(textarea);
+			  textarea.focus();
+			  textarea.select();
+			  const successful = document.execCommand('copy');
+			  document.body.removeChild(textarea);
+			  if (successful) {
+				const originalText = copyButton.innerText;
+				copyButton.innerText = "Скопировано";
+				setTimeout(() => {
+				  copyButton.innerText = originalText;
+				}, 1000);
+			  } else {
+				throw new Error("Не удалось скопировать текст.");
+			  }
+			} catch (err) {
+			  alert("Ошибка при копировании текста: " + err);
+			}
+		  }
+		});
 
-      // Кнопка "Закрыть"
-      const closeButton = document.createElement("button");
-      closeButton.innerText = "Закрыть";
-      closeButton.style.display = "inline-block";
-      closeButton.style.padding = "5px 10px";
-      closeButton.style.cursor = "pointer";
-      closeButton.style.border = "none";
-      closeButton.style.borderRadius = "4px";
-      closeButton.style.backgroundColor = "#f44336"; // Красная кнопка
-      closeButton.style.color = "#ffffff";
-      closeButton.addEventListener("click", () => modal.remove());
+        // Кнопка "Закрыть"
+        const closeButton = document.createElement("button");
+        closeButton.innerText = "Закрыть";
+        closeButton.style.display = "inline-block";
+        closeButton.style.padding = "5px 10px";
+        closeButton.style.cursor = "pointer";
+        closeButton.style.border = "none";
+        closeButton.style.borderRadius = "4px";
+        closeButton.style.backgroundColor = "#f44336"; // Красная кнопка
+        closeButton.style.color = "#ffffff";
+        closeButton.addEventListener("click", () => modal.remove());
 
-      // Добавляем содержимое и кнопки в модальное окно
-      modal.appendChild(contentContainer);
-      modal.appendChild(copyButton);
-      modal.appendChild(closeButton);
+        // Добавляем содержимое и кнопки в модальное окно
+        modal.appendChild(contentContainer);
+        modal.appendChild(copyButton);
+        modal.appendChild(closeButton);
 
-      document.body.appendChild(modal);
-    },
-    args: [message, isError]
+        // Добавляем модальное окно в документ
+        document.body.appendChild(modal);
+
+        // Добавляем стили для Markdown-элементов
+        const style = document.createElement("style");
+        style.innerHTML = `
+          #ai-result-modal h1, #ai-result-modal h2, #ai-result-modal h3 {
+            color: #151515;
+          }
+          #ai-result-modal a {
+            color: #1e90ff;
+            text-decoration: none;
+          }
+          #ai-result-modal a:hover {
+            text-decoration: underline;
+          }
+          #ai-result-modal pre {
+            background-color: rgba(40, 40, 40, 1); /* Темный фон */
+			color: #ffffff; /* Белый текст для контраста */
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+          }
+          #ai-result-modal code {
+            background-color: rgba(40, 40, 40, 1); /* Темный фон */
+			color: #ffffff; /* Белый текст для контраста */
+            padding: 2px 4px;
+            border-radius: 4px;
+          }
+          #ai-result-modal ul, #ai-result-modal ol {
+            margin-left: 20px;
+          }
+        `;
+        document.head.appendChild(style);
+      },
+      args: [message, isError]
+    });
   });
 }
 
@@ -304,23 +373,23 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
       messages: [{ role: "user", content: prompt }]
     })
   })
-  .then(response => {
-    if (!response.ok) {
-      return response.text().then(errorText => {
-        throw new Error(`Ошибка API: ${response.status} ${response.statusText}. ${errorText}`);
-      });
-    }
-    return response.json();
-  })
-  .then(data => {
-    const resultText = data.choices?.[0]?.message?.content || "Ответ не получен.";
-    displayModal(tabId, resultText); // Показать результат
-  })
-  .catch(error => {
-    console.error("Ошибка обработки запроса:", error);
-    displayModal(tabId, `Произошла ошибка: ${error.message}`, true); // Показать ошибку
-  })
-  .finally(() => {
-    removeLoadingIndicator(tabId); // Удалить индикатор
-  });
+    .then(response => {
+      if (!response.ok) {
+        return response.text().then(errorText => {
+          throw new Error(`Ошибка API: ${response.status} ${response.statusText}. ${errorText}`);
+        });
+      }
+      return response.json();
+    })
+    .then(data => {
+      const resultText = data.choices?.[0]?.message?.content || "Ответ не получен.";
+      displayModal(tabId, resultText); // Показать результат
+    })
+    .catch(error => {
+      console.error("Ошибка обработки запроса:", error);
+      displayModal(tabId, `Произошла ошибка: ${error.message}`, true); // Показать ошибку
+    })
+    .finally(() => {
+      removeLoadingIndicator(tabId); // Удалить индикатор
+    });
 }
