@@ -28,3 +28,10 @@ AI Text Tools is a Chrome extension designed to enhance productivity by offering
 
 ## Note
 - Ensure that you configure your API key and model in the extension's options page for it to function properly.
+
+## Language Support
+We appreciate your interest in this plugin! Currently, the plugin is in its initial stage and is available in its current form. However, we recognize the importance of accessibility and usability for users around the world.
+
+If this plugin gains popularity and receives positive feedback, we will prioritize adding support for multiple languages in future updates. Our goal is to make this tool as user-friendly as possible for everyone.
+
+Thank you for your understanding and support!
