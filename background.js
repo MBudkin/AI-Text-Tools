@@ -544,7 +544,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// Обновленная функция processPrompt с поддержкой стриминга и удалением спиннера при первом чанке
+// Обновленная функция processPrompt с поддержкой стриминга, удалением спиннера при первом чанке и обработкой неполных строк
 function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
   showLoadingIndicator(tabId); // Показать индикатор
 
@@ -583,36 +583,64 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
       let done = false;
       let accumulatedText = '';
       let isFirstChunk = true; // Флаг для первого чанка
+      let buffer = ""; // Буфер для накопления данных
 
       while (!done) {
         const { value, done: doneReading } = await reader.read();
         done = doneReading;
         if (value) {
           const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split('\n');
+          buffer += chunk; // Накопление данных в буфер
+
+          let lines = buffer.split('\n');
+          buffer = lines.pop(); // Оставляем неполную строку в буфере
 
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const jsonStr = line.slice('data: '.length).trim();
+            const trimmedLine = line.trim();
+            if (trimmedLine.startsWith('data: ')) {
+              const jsonStr = trimmedLine.slice('data: '.length).trim();
               if (jsonStr === '[DONE]') {
                 done = true;
                 break;
               }
-              try {
-                const json = JSON.parse(jsonStr);
-                const delta = json.choices?.[0]?.delta?.content;
-                if (delta) {
-                  accumulatedText += delta;
-                  updateModalContent(tabId, accumulatedText);
-                  
-                  if (isFirstChunk) {
-                    removeLoadingIndicator(tabId); // Удалить спиннер при первом чанке
-                    isFirstChunk = false;
+              if (jsonStr) { // Проверка, что строка не пуста
+                try {
+                  const json = JSON.parse(jsonStr);
+                  const delta = json.choices?.[0]?.delta?.content;
+                  if (delta) {
+                    accumulatedText += delta;
+                    updateModalContent(tabId, accumulatedText);
+
+                    if (isFirstChunk) {
+                      removeLoadingIndicator(tabId); // Удалить спиннер при первом чанке
+                      isFirstChunk = false;
+                    }
                   }
+                } catch (err) {
+                  console.error("Ошибка парсинга строки стрима:", err);
+                  // Можно добавить дополнительную логику для восстановления или пропуска
                 }
-              } catch (err) {
-                console.error("Ошибка парсинга строки стрима:", err);
               }
+            }
+          }
+        }
+      }
+
+      // Обработка оставшегося буфера, если необходимо
+      if (buffer) {
+        const trimmedLine = buffer.trim();
+        if (trimmedLine.startsWith('data: ')) {
+          const jsonStr = trimmedLine.slice('data: '.length).trim();
+          if (jsonStr && jsonStr !== '[DONE]') {
+            try {
+              const json = JSON.parse(jsonStr);
+              const delta = json.choices?.[0]?.delta?.content;
+              if (delta) {
+                accumulatedText += delta;
+                updateModalContent(tabId, accumulatedText);
+              }
+            } catch (err) {
+              console.error("Ошибка парсинга оставшейся строки стрима:", err);
             }
           }
         }
