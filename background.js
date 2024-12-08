@@ -207,7 +207,7 @@ function addCopyButtons() {
   });
 }
 
-// Обновленная функция displayModal с использованием Flexbox для центрирования
+// Обновленная функция displayModal с использованием Flexbox для центрирования кнопок
 function displayModal(tabId, message, isError = false) {
   // Загружаем библиотеку Marked
   chrome.scripting.executeScript({
@@ -271,8 +271,6 @@ function displayModal(tabId, message, isError = false) {
         // Кнопка "Копировать весь текст"
         const copyButton = document.createElement("button");
         copyButton.innerText = "Копировать весь текст";
-        copyButton.style.display = "inline-block";
-        copyButton.style.marginRight = "10px";
         copyButton.style.padding = "5px 10px";
         copyButton.style.cursor = "pointer";
         copyButton.style.border = "none";
@@ -280,14 +278,12 @@ function displayModal(tabId, message, isError = false) {
         copyButton.style.backgroundColor = "#4CAF50";
         copyButton.style.color = "#ffffff";
         copyButton.addEventListener("click", () => {
-          // Клонируем содержимое, чтобы не изменять оригинал
+          // Логика копирования всего текста
           const clone = contentContainer.cloneNode(true);
-          // Удаляем все кнопки "Копировать" из клона
           const buttons = clone.querySelectorAll('.copy-button');
           buttons.forEach(btn => btn.remove());
-          // Получаем текст без кнопок
           const textToCopy = clone.innerText;
-          
+
           if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(textToCopy).then(() => {
               const originalText = copyButton.innerText;
@@ -299,7 +295,6 @@ function displayModal(tabId, message, isError = false) {
               alert("Ошибка при копировании текста: " + err);
             });
           } else {
-            // Резервный метод копирования
             try {
               const textarea = document.createElement("textarea");
               textarea.value = textToCopy;
@@ -328,7 +323,6 @@ function displayModal(tabId, message, isError = false) {
         // Кнопка "Закрыть"
         const closeButton = document.createElement("button");
         closeButton.innerText = "Закрыть";
-        closeButton.style.display = "inline-block";
         closeButton.style.padding = "5px 10px";
         closeButton.style.cursor = "pointer";
         closeButton.style.border = "none";
@@ -337,10 +331,20 @@ function displayModal(tabId, message, isError = false) {
         closeButton.style.color = "#ffffff";
         closeButton.addEventListener("click", () => overlay.remove());
 
-        // Добавляем содержимое и кнопки в модальное окно
+        // Создаём контейнер для кнопок с Flexbox
+        const buttonsContainer = document.createElement("div");
+        buttonsContainer.style.display = "flex";
+        buttonsContainer.style.justifyContent = "center"; // Центрирование кнопок
+        buttonsContainer.style.gap = "10px"; // Расстояние между кнопками
+        buttonsContainer.style.marginTop = "20px"; // Отступ сверху
+
+        // Добавляем кнопки в контейнер
+        buttonsContainer.appendChild(copyButton);
+        buttonsContainer.appendChild(closeButton);
+
+        // Добавляем содержимое и контейнер с кнопками в модальное окно
         modal.appendChild(contentContainer);
-        modal.appendChild(copyButton);
-        modal.appendChild(closeButton);
+        modal.appendChild(buttonsContainer);
 
         // Добавляем модальное окно в оверлей
         overlay.appendChild(modal);
@@ -392,10 +396,12 @@ function displayModal(tabId, message, isError = false) {
             border: none;
             border-radius: 4px;
           }
-          /* Стили для кнопки "Копировать весь текст" */
+          /* Удалите или закомментируйте следующее правило */
+          /*
           #ai-result-modal > button:first-of-type {
             margin-top: 10px;
           }
+          */
         `;
         document.head.appendChild(style);
 
@@ -407,7 +413,7 @@ function displayModal(tabId, message, isError = false) {
   });
 }
 
-// Обновленная функция initializeModal с использованием Flexbox для центрирования
+// Обновленная функция initializeModal с использованием Flexbox для центрирования кнопок
 function initializeModal(tabId, isError = false) {
   chrome.scripting.executeScript({
     target: { tabId },
@@ -469,8 +475,6 @@ function initializeModal(tabId, isError = false) {
         // Кнопка "Копировать весь текст"
         const copyButton = document.createElement("button");
         copyButton.innerText = "Копировать весь текст";
-        copyButton.style.display = "inline-block";
-        copyButton.style.marginRight = "10px";
         copyButton.style.padding = "5px 10px";
         copyButton.style.cursor = "pointer";
         copyButton.style.border = "none";
@@ -478,14 +482,12 @@ function initializeModal(tabId, isError = false) {
         copyButton.style.backgroundColor = "#4CAF50";
         copyButton.style.color = "#ffffff";
         copyButton.addEventListener("click", () => {
-          // Клонируем содержимое, чтобы не изменять оригинал
+          // Логика копирования всего текста
           const clone = contentContainer.cloneNode(true);
-          // Удаляем все кнопки "Копировать" из клона
           const buttons = clone.querySelectorAll('.copy-button');
           buttons.forEach(btn => btn.remove());
-          // Получаем текст без кнопок
           const textToCopy = clone.innerText;
-          
+
           if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(textToCopy).then(() => {
               const originalText = copyButton.innerText;
@@ -497,7 +499,6 @@ function initializeModal(tabId, isError = false) {
               alert("Ошибка при копировании текста: " + err);
             });
           } else {
-            // Резервный метод копирования
             try {
               const textarea = document.createElement("textarea");
               textarea.value = textToCopy;
@@ -526,7 +527,6 @@ function initializeModal(tabId, isError = false) {
         // Кнопка "Закрыть"
         const closeButton = document.createElement("button");
         closeButton.innerText = "Закрыть";
-        closeButton.style.display = "inline-block";
         closeButton.style.padding = "5px 10px";
         closeButton.style.cursor = "pointer";
         closeButton.style.border = "none";
@@ -535,10 +535,20 @@ function initializeModal(tabId, isError = false) {
         closeButton.style.color = "#ffffff";
         closeButton.addEventListener("click", () => overlay.remove());
 
-        // Добавляем содержимое и кнопки в модальное окно
+        // Создаём контейнер для кнопок с Flexbox
+        const buttonsContainer = document.createElement("div");
+        buttonsContainer.style.display = "flex";
+        buttonsContainer.style.justifyContent = "center"; // Центрирование кнопок
+        buttonsContainer.style.gap = "10px"; // Расстояние между кнопками
+        buttonsContainer.style.marginTop = "20px"; // Отступ сверху
+
+        // Добавляем кнопки в контейнер
+        buttonsContainer.appendChild(copyButton);
+        buttonsContainer.appendChild(closeButton);
+
+        // Добавляем содержимое и контейнер с кнопками в модальное окно
         modal.appendChild(contentContainer);
-        modal.appendChild(copyButton);
-        modal.appendChild(closeButton);
+        modal.appendChild(buttonsContainer);
 
         // Добавляем модальное окно в оверлей
         overlay.appendChild(modal);
@@ -590,10 +600,12 @@ function initializeModal(tabId, isError = false) {
             border: none;
             border-radius: 4px;
           }
-          /* Стили для кнопки "Копировать весь текст" */
+          /* Удалите или закомментируйте следующее правило */
+          /*
           #ai-result-modal > button:first-of-type {
             margin-top: 10px;
           }
+          */
         `;
         document.head.appendChild(style);
 
