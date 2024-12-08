@@ -555,7 +555,7 @@ function initializeModal(tabId, isError = false) {
         closeButton.style.color = "#ffffff";
         closeButton.addEventListener("click", () => overlay.remove());
 
-        // Создаём контейнер для кнопок с Flexbox
+        // Создаём контейнер дл�� кнопок с Flexbox
         const buttonsContainer = document.createElement("div");
         buttonsContainer.style.display = "flex";
         buttonsContainer.style.justifyContent = "center"; // Центрирование кнопок
@@ -770,8 +770,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
             prompt = prompt.replace(/{{selectionText}}/g, info.selectionText);
 
             processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
-          } else {
-            displayModal(tab.id, "Запрос не введен.", true);
           }
         } catch (error) {
           console.error("Ошибка при получении пользовательского запроса:", error);
@@ -790,10 +788,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           const userPrompt = results[0].result;
           if (userPrompt) {
             let prompt = userPrompt;
-
             processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
-          } else {
-            displayModal(tab.id, "Запрос не введен.", true);
           }
         } catch (error) {
           console.error("Ошибка при получении пользовательского запроса:", error);
@@ -1020,8 +1015,6 @@ chrome.action.onClicked.addListener(async (tab) => {
             prompt = prompt.replace(/{{selectionText}}/g, selectedText);
 
             processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
-          } else {
-            displayModal(tab.id, "Запрос не введен.", true);
           }
         } catch (error) {
           console.error("Ошибка при получении пользовательского запроса:", error);
@@ -1041,8 +1034,6 @@ chrome.action.onClicked.addListener(async (tab) => {
           if (userPrompt) {
             let prompt = userPrompt;
             processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
-          } else {
-            displayModal(tab.id, "Запрос не введен.", true);
           }
         } catch (error) {
           console.error("Ошибка при получении пользовательского запроса:", error);
