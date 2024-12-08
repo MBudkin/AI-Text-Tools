@@ -20,6 +20,29 @@
       cursor: pointer;
       font-size: 12px;
     }
+    #history-link {
+      margin-top: 20px;
+    }
+    #history-link a {
+      color: #1e90ff;
+      text-decoration: none;
+    }
+    #history-link a:hover {
+      text-decoration: underline;
+    }
+    /* Стили для нового раздела настроек истории */
+    #history-settings {
+      margin-top: 20px;
+    }
+    #history-settings label {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    #history-settings input[type="number"] {
+      width: 100px;
+      padding: 5px;
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
@@ -61,6 +84,23 @@
     <label for="import-file">Импортировать настройки:</label>
     <input type="file" id="import-file" accept=".json" />
     <button id="import">Импортировать</button>
+  </div>
+  
+  <!-- Секция для настройки количества записей в истории -->
+  <div id="history-settings">
+    <h2>Настройки Истории</h2>
+    <label for="historyLimit">Количество записей в истории (0-1000):</label>
+    <input id="historyLimit" type="number" min="0" max="1000" value="20" />
+    <p>Установите 0 для отключения сохранения истории.</p>
+    <button id="saveHistoryLimit">Сохранить</button>
+  </div>
+  
+  <!-- Секция для ссылки на историю запросов -->
+  <div id="history-link">
+    <h2>История запросов</h2>
+    <p>
+      <a href="history.html" target="_blank">Просмотреть последние запросы и ответы</a>
+    </p>
   </div>
   
   <script src="options.js"></script>

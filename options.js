@@ -2,13 +2,17 @@ let menuItems = [];
 
 document.addEventListener("DOMContentLoaded", () => {
   // Загрузка настроек и пунктов меню
-  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems"], (settings) => {
+  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit"], (settings) => {
     document.getElementById("apiKey").value = settings.apiKey || "";
     document.getElementById("apiServer").value = settings.apiServer || "https://api.openai.com/v1";
     document.getElementById("apiModel").value = settings.apiModel || "gpt-4";
     
     menuItems = settings.menuItems || [];
     displayMenuItems();
+
+    // Загрузка настройки historyLimit
+    const historyLimitInput = document.getElementById("historyLimit");
+    historyLimitInput.value = typeof settings.historyLimit === "number" ? settings.historyLimit : 20;
   });
 });
 
@@ -92,8 +96,52 @@ document.getElementById("save").addEventListener("click", () => {
   const apiKey = document.getElementById("apiKey").value;
   const apiServer = document.getElementById("apiServer").value;
   const apiModel = document.getElementById("apiModel").value;
+  const historyLimit = parseInt(document.getElementById("historyLimit").value, 10);
 
-  chrome.storage.sync.set({ apiKey, apiServer, apiModel, menuItems }, () => {
+  // Валидация значения historyLimit
+  if (isNaN(historyLimit) || historyLimit < 0 || historyLimit > 1000) {
+    alert("Пожалуйста, введите корректное число для количества записей в истории (0-1000).");
+    return;
+  }
+
+  chrome.storage.sync.set({ 
+    apiKey, 
+    apiServer, 
+    apiModel, 
+    menuItems,
+    historyLimit 
+  }, () => {
+    // Отправляем сообщение в background.js для обновления контекстного меню
+    chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(chrome.runtime.lastError);
+      } else {
+        alert("Настройки сохранены!");
+      }
+    });
+  });
+});
+
+// Добавляем обработчик для кнопки сохранения лимита истории
+document.getElementById("saveHistoryLimit").addEventListener("click", () => {
+  const apiKey = document.getElementById("apiKey").value;
+  const apiServer = document.getElementById("apiServer").value;
+  const apiModel = document.getElementById("apiModel").value;
+  const historyLimit = parseInt(document.getElementById("historyLimit").value, 10);
+
+  // Валидация значения historyLimit
+  if (isNaN(historyLimit) || historyLimit < 0 || historyLimit > 1000) {
+    alert("Пожалуйста, введите корректное число для количества записей в истории (0-1000).");
+    return;
+  }
+
+  chrome.storage.sync.set({ 
+    apiKey, 
+    apiServer, 
+    apiModel, 
+    menuItems,
+    historyLimit 
+  }, () => {
     // Отправляем сообщение в background.js для обновления контекстного меню
     chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
       if (chrome.runtime.lastError) {
@@ -110,7 +158,7 @@ document.getElementById("save").addEventListener("click", () => {
 
 // Функция для экспорта настроек
 document.getElementById("export").addEventListener("click", () => {
-  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems"], (settings) => {
+  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit"], (settings) => {
     const dataStr = JSON.stringify(settings, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -144,9 +192,12 @@ document.getElementById("import").addEventListener("click", () => {
         typeof importedSettings.apiKey !== "undefined" &&
         typeof importedSettings.apiServer !== "undefined" &&
         typeof importedSettings.apiModel !== "undefined" &&
-        Array.isArray(importedSettings.menuItems)
+        Array.isArray(importedSettings.menuItems) &&
+        typeof importedSettings.historyLimit === "number" &&
+        importedSettings.historyLimit >= 0 &&
+        importedSettings.historyLimit <= 1000
       ) {
-        chrome.storage.sync.set(importedSettings, () => {
+        chrome.storage.sync.set(importedSettings, () => { // Изменено на storage.sync
           // Отправляем сообщение в background.js для обновления контекстного меню
           chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
             if (chrome.runtime.lastError) {
@@ -161,6 +212,8 @@ document.getElementById("import").addEventListener("click", () => {
               
               menuItems = importedSettings.menuItems || [];
               displayMenuItems();
+
+              document.getElementById("historyLimit").value = importedSettings.historyLimit || 20;
             }
           });
         });
