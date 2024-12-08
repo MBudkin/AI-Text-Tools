@@ -207,7 +207,6 @@ function addCopyButtons() {
   });
 }
 
-// Обновленная функция displayModal с использованием Flexbox для центрирования кнопок
 function displayModal(tabId, message, isError = false) {
   // Загружаем библиотеку Marked
   chrome.scripting.executeScript({
@@ -303,7 +302,7 @@ function displayModal(tabId, message, isError = false) {
               document.body.appendChild(textarea);
               textarea.focus();
               textarea.select();
-              const successful = document.execCommand('copy');
+              const successful = document.execCommand("copy");
               document.body.removeChild(textarea);
               if (successful) {
                 const originalText = copyButton.innerText;
@@ -352,12 +351,14 @@ function displayModal(tabId, message, isError = false) {
         // Добавляем оверлей в документ
         document.body.appendChild(overlay);
 
-        // Добавляем стили для Markdown-элементов и кнопок "Копировать"
+        // Добавляем стили для Markdown-элементов, таблиц и кнопок "Копировать"
         const style = document.createElement("style");
         style.innerHTML = `
+          /* Заголовки */
           #ai-result-modal h1, #ai-result-modal h2, #ai-result-modal h3 {
             color: #151515;
           }
+          /* Ссылки */
           #ai-result-modal a {
             color: #1e90ff;
             text-decoration: none;
@@ -365,6 +366,31 @@ function displayModal(tabId, message, isError = false) {
           #ai-result-modal a:hover {
             text-decoration: underline;
           }
+          /* Таблицы */
+          #ai-result-modal table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+          }
+          #ai-result-modal th, #ai-result-modal td {
+            border: 1px solid #000; /* Толщина 1px и чёрный цвет границы */
+            padding: 10px; /* Увеличенные отступы */
+            text-align: left;
+          }
+          #ai-result-modal th {
+            background-color: #BDD7EE; /* Фон заголовка */
+            font-weight: bold;
+          }
+          #ai-result-modal tr:nth-child(even) {
+            background-color: #D9D9D9; /* Чередование чётных строк */
+          }
+          #ai-result-modal tr:nth-child(odd) {
+            background-color: #F2F2F2; /* Чередование нечётных строк */
+          }
+          #ai-result-modal tr:hover {
+            background-color: #FFF2CC; /* Эффект наведения */
+          }
+          /* Блоки кода */
           #ai-result-modal pre {
             background-color: rgba(40, 40, 40, 1);
             color: #ffffff;
@@ -380,10 +406,11 @@ function displayModal(tabId, message, isError = false) {
             padding: 2px 4px;
             border-radius: 4px;
           }
+          /* Списки */
           #ai-result-modal ul, #ai-result-modal ol {
             margin-left: 20px;
           }
-          /* Стили для кнопки "Копировать" внутри блоков кода */
+          /* Кнопки "Копировать" внутри блоков кода */
           .copy-button {
             position: absolute;
             top: 5px;
@@ -396,12 +423,6 @@ function displayModal(tabId, message, isError = false) {
             border: none;
             border-radius: 4px;
           }
-          /* Удалите или закомментируйте следующее правило */
-          /*
-          #ai-result-modal > button:first-of-type {
-            margin-top: 10px;
-          }
-          */
         `;
         document.head.appendChild(style);
 
@@ -413,7 +434,6 @@ function displayModal(tabId, message, isError = false) {
   });
 }
 
-// Обновленная функция initializeModal с использованием Flexbox для центрирования кнопок
 function initializeModal(tabId, isError = false) {
   chrome.scripting.executeScript({
     target: { tabId },
@@ -507,7 +527,7 @@ function initializeModal(tabId, isError = false) {
               document.body.appendChild(textarea);
               textarea.focus();
               textarea.select();
-              const successful = document.execCommand('copy');
+              const successful = document.execCommand("copy");
               document.body.removeChild(textarea);
               if (successful) {
                 const originalText = copyButton.innerText;
@@ -556,12 +576,14 @@ function initializeModal(tabId, isError = false) {
         // Добавляем оверлей в документ
         document.body.appendChild(overlay);
 
-        // Добавляем стили для Markdown-элементов и кнопок "Копировать"
+        // Добавляем стили для Markdown-элементов, таблиц и кнопок "Копировать"
         const style = document.createElement("style");
         style.innerHTML = `
+          /* Заголовки */
           #ai-result-modal h1, #ai-result-modal h2, #ai-result-modal h3 {
             color: #151515;
           }
+          /* Ссылки */
           #ai-result-modal a {
             color: #1e90ff;
             text-decoration: none;
@@ -569,6 +591,31 @@ function initializeModal(tabId, isError = false) {
           #ai-result-modal a:hover {
             text-decoration: underline;
           }
+          /* Таблицы */
+          #ai-result-modal table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+          }
+          #ai-result-modal th, #ai-result-modal td {
+            border: 1px solid #000; /* Толщина 1px и чёрный цвет границы */
+            padding: 10px; /* Увеличенные отступы */
+            text-align: left;
+          }
+          #ai-result-modal th {
+            background-color: #BDD7EE; /* Фон заголовка */
+            font-weight: bold;
+          }
+          #ai-result-modal tr:nth-child(even) {
+            background-color: #D9D9D9; /* Чередование чётных строк */
+          }
+          #ai-result-modal tr:nth-child(odd) {
+            background-color: #F2F2F2; /* Чередование нечётных строк */
+          }
+          #ai-result-modal tr:hover {
+            background-color: #FFF2CC; /* Эффект наведения */
+          }
+          /* Блоки кода */
           #ai-result-modal pre {
             background-color: rgba(40, 40, 40, 1);
             color: #ffffff;
@@ -584,10 +631,11 @@ function initializeModal(tabId, isError = false) {
             padding: 2px 4px;
             border-radius: 4px;
           }
+          /* Списки */
           #ai-result-modal ul, #ai-result-modal ol {
             margin-left: 20px;
           }
-          /* Стили для кнопки "Копировать" внутри блоков кода */
+          /* Кнопки "Копировать" внутри блоков кода */
           .copy-button {
             position: absolute;
             top: 5px;
@@ -600,12 +648,6 @@ function initializeModal(tabId, isError = false) {
             border: none;
             border-radius: 4px;
           }
-          /* Удалите или закомментируйте следующее правило */
-          /*
-          #ai-result-modal > button:first-of-type {
-            margin-top: 10px;
-          }
-          */
         `;
         document.head.appendChild(style);
 
@@ -775,7 +817,50 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// Обновленная функция processPrompt с поддержкой стриминга, удалением спиннера при первом чанке и обработкой неполных строк
+// Функция для добавления записи в историю запросов с учётом настраиваемого количества записей
+function addToHistory(query, response) {
+  // Сначала проверяем historyLimit
+  chrome.storage.sync.get(['historyLimit'], (data) => { // Изменено на storage.sync
+    const historyLimit = typeof data.historyLimit === 'number' ? data.historyLimit : 20;
+    
+    // Если historyLimit равен 0, не сохраняем историю
+    if (historyLimit === 0) {
+      // Очищаем существующую историю
+      chrome.storage.local.remove('history', () => {
+        console.log('История очищена, так как historyLimit = 0');
+      });
+      return;
+    }
+
+    const timestamp = new Date();
+    const entry = {
+      date: timestamp.toLocaleDateString(),
+      time: timestamp.toLocaleTimeString(),
+      query: query,
+      response: response
+    };
+
+    // Получаем текущую историю
+    chrome.storage.local.get(['history'], (data) => {
+      let history = data.history || [];
+
+      // Добавляем новую запись в начало массива
+      history.unshift(entry);
+
+      // Оставляем только последние historyLimit записей
+      if (history.length > historyLimit) {
+        history = history.slice(0, historyLimit);
+      }
+
+      // Сохраняем обновленную историю
+      chrome.storage.local.set({ history }, () => {
+        console.log(`История обновлена. Сохранено ${history.length} записей из ${historyLimit} возможных.`);
+      });
+    });
+  });
+}
+
+// Обновлённая функция processPrompt с добавленным вызовом addToHistory
 function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
   showLoadingIndicator(tabId); // Показать индикатор
 
@@ -876,6 +961,9 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
           }
         }
       }
+
+      // Добавляем запись в историю после успешного получения ответа
+      addToHistory(prompt, accumulatedText);
     })
     .catch(error => {
       console.error("Ошибка обработки запроса:", error);
@@ -883,5 +971,90 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
       initializeModal(tabId, true);
       updateModalContent(tabId, `Произошла ошибка: ${error.message}`);
     });
-    // Удаляем вызов removeLoadingIndicator из блока finally
+  // Удаляем вызов removeLoadingIndicator из блока finally
 }
+
+// Остальной код background.js остается без изменений
+
+// Обработчик нажатия на значок расширения
+chrome.action.onClicked.addListener(async (tab) => {
+  try {
+    // Получаем активную вкладку, если tab не определён
+    if (!tab) {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      tab = activeTab;
+      if (!tab) {
+        throw new Error("Не удалось определить активную вкладку.");
+      }
+    }
+
+    // Получаем настройки из хранилища
+    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel"], async (settings) => {
+      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4" } = settings;
+
+      if (!apiKey) {
+        displayModal(tab.id, "API-ключ не задан в настройках.", true);
+        return;
+      }
+
+      // Проверяем наличие выделенного текста
+      const selectionResults = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => window.getSelection().toString()
+      });
+      const selectedText = selectionResults[0]?.result || "";
+
+      if (selectedText) {
+        // Если есть выделенный текст – логика "Свой запрос..."
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+              const userPrompt = prompt("Введите ваш запрос для выделенного текста:");
+              return userPrompt;
+            },
+          });
+          const userPrompt = results[0].result;
+          if (userPrompt) {
+            let prompt = `${userPrompt}: "{{selectionText}}"`;
+            prompt = prompt.replace(/{{selectionText}}/g, selectedText);
+
+            processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
+          } else {
+            displayModal(tab.id, "Запрос не введен.", true);
+          }
+        } catch (error) {
+          console.error("Ошибка при получении пользовательского запроса:", error);
+          displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
+        }
+      } else {
+        // Если выделенного текста нет – логика "Спросить AI"
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+              const userPrompt = prompt("Введите ваш запрос:");
+              return userPrompt;
+            },
+          });
+          const userPrompt = results[0].result;
+          if (userPrompt) {
+            let prompt = userPrompt;
+            processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
+          } else {
+            displayModal(tab.id, "Запрос не введен.", true);
+          }
+        } catch (error) {
+          console.error("Ошибка при получении пользовательского запроса:", error);
+          displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Ошибка обработки запроса:", error);
+    if (tab && tab.id) {
+      displayModal(tab.id, `Произошла ошибка: ${error.message}`, true);
+    }
+  }
+});
+
