@@ -39,4 +39,3 @@ We appreciate your interest in this plugin! Currently, the plugin is in its init
 If this plugin gains popularity and receives positive feedback, we will prioritize adding support for multiple languages in future updates. Our goal is to make this tool as user-friendly as possible for everyone.
 
 Thank you for your understanding and support!
-*
