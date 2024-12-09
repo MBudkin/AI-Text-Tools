@@ -1,4 +1,8 @@
-# AI Text Tools
+
+<div align="center">
+<img src="icon128.png" alt="icon" width="50px"/>
+<h1 align="center">AI Text Tools</h1>
+</div>
 
 AI Text Tools is a Chrome extension designed to enhance productivity by offering AI-based context menu options for various text manipulations like translation, summarization, and explanation.
 
