@@ -385,7 +385,7 @@ function displayModal(tabId, message, isError = false) {
             background-color: #D9D9D9; /* Чередование чётных строк */
           }
           #ai-result-modal tr:nth-child(odd) {
-            background-color: #F2F2F2; /* Чередование нечётных строк */
+            background-color: #E9E9E9; /* Чередование нечётных строк */
           }
           #ai-result-modal tr:hover {
             background-color: #FFF2CC; /* Эффект наведения */
@@ -610,7 +610,7 @@ function initializeModal(tabId, isError = false) {
             background-color: #D9D9D9; /* Чередование чётных строк */
           }
           #ai-result-modal tr:nth-child(odd) {
-            background-color: #F2F2F2; /* Чередование нечётных строк */
+            background-color: #E9E9E9; /* Чередование нечётных строк */
           }
           #ai-result-modal tr:hover {
             background-color: #FFF2CC; /* Эффект наведения */
