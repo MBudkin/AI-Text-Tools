@@ -733,6 +733,47 @@ function updateModalContent(tabId, newContent) {
   });
 }
 
+/**
+ * Универсальная функция для показа prompt с автозаполнением и сохранением последнего запроса
+ */
+async function handleUserPrompt(tab, { promptText, selectionText = "" }) {
+  // Получаем последний пользовательский запрос для prefill
+  const { lastUserPrompt } = await new Promise(resolve =>
+    chrome.storage.local.get(["lastUserPrompt"], resolve)
+  );
+  const prefill = lastUserPrompt || "";
+
+  // Показываем prompt с нужным текстом и prefill
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (text, prefill) => prompt(text, prefill),
+      args: [promptText, prefill],
+    });
+  } catch (err) {
+    console.error("Ошибка вызова chrome.scripting.executeScript для prompt:", err);
+    return null;
+  }
+  console.log("Результат prompt через scripting.executeScript:", results);
+  const userPrompt = results && results[0] ? results[0].result : undefined;
+  if (typeof userPrompt === "undefined") {
+    console.error("Не удалось получить результат prompt. Возможно, prompt не сработал в данном контексте.");
+    return null;
+  }
+  if (!userPrompt) return null;
+
+  // Всегда сохраняем последний пользовательский запрос (без контекста)
+  chrome.storage.local.set({ lastUserPrompt: userPrompt });
+
+  // Формируем итоговый промпт
+  let finalPrompt = userPrompt;
+  if (selectionText) {
+    finalPrompt = `${userPrompt}: "${selectionText}"`;
+  }
+  return { userPrompt, finalPrompt };
+}
+
 // Обработчик кликов на пункты меню
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   try {
@@ -762,17 +803,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           const promptText = info.selectionText
             ? "Введите ваш запрос по выделенному тексту:"
             : "Введите ваш запрос:";
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: (text) => prompt(text),
-            args: [promptText],
-          });
-          const userPrompt = results[0].result;
-          if (userPrompt) {
-            finalPrompt = `${userPrompt}: "${info.selectionText}"`;
-          } else {
-            return; // Пользователь отменил ввод
-          }
+          const result = await handleUserPrompt(tab, { promptText, selectionText: info.selectionText });
+          if (!result) return;
+          finalPrompt = result.finalPrompt;
         } catch (error) {
           console.error("Ошибка при получении пользовательского запроса:", error);
           displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
@@ -780,14 +813,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         }
       } else if (info.menuItemId === "ask-ai") {
         try {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => prompt("Введите ваш запрос:"),
-          });
-          finalPrompt = results[0].result;
-          if (!finalPrompt) {
-            return; // Пользователь отменил ввод
-          }
+          const result = await handleUserPrompt(tab, { promptText: "Введите ваш запрос:" });
+          if (!result) return;
+          finalPrompt = result.finalPrompt;
         } catch (error) {
           console.error("Ошибка при получении пользовательского запроса:", error);
           displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
@@ -1032,32 +1060,18 @@ chrome.action.onClicked.addListener(async (tab) => {
         const promptText = selectedText
           ? "Введите ваш запрос по выделенному тексту:"
           : "Введите ваш запрос:";
-        const results = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: (text) => prompt(text),
-          args: [promptText],
-        });
-        userPrompt = results[0]?.result;
-      } catch (error) {
-        console.error("Ошибка при запросе ввода от пользователя:", error);
-        displayModal(tab.id, "Не удалось получить запрос от пользователя.", true);
-        return;
-      }
-
-      if (userPrompt) {
-        let finalPrompt = userPrompt;
-        
-        // Если был выделенный текст, добавляем его в промпт
-        if (selectedText) {
-          finalPrompt = `${userPrompt}: "${selectedText}"`;
-        }
-        
+        const result = await handleUserPrompt(tab, { promptText, selectionText: selectedText });
+        if (!result) return;
+        let finalPrompt = result.finalPrompt;
         // Добавляем глобальный промпт, если он есть
         if (globalPrompt) {
           finalPrompt = `${globalPrompt}\n\n${finalPrompt}`;
         }
-        
         processPrompt(tab.id, apiServer, apiKey, apiModel, finalPrompt);
+      } catch (error) {
+        console.error("Ошибка при запросе ввода от пользователя:", error);
+        displayModal(tab.id, "Не удалось получить запрос от пользователя.", true);
+        return;
       }
     });
   } catch (error) {
