@@ -759,9 +759,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
       if (info.menuItemId === "custom-prompt" && info.selectionText) {
         try {
+          const promptText = info.selectionText
+            ? "Введите ваш запрос по выделенному тексту:"
+            : "Введите ваш запрос:";
           const results = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            func: () => prompt("Введите ваш запрос:"),
+            func: (text) => prompt(text),
+            args: [promptText],
           });
           const userPrompt = results[0].result;
           if (userPrompt) {
@@ -1024,28 +1028,28 @@ chrome.action.onClicked.addListener(async (tab) => {
 
       let userPrompt;
       try {
-        if (selectedText) {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: (text) => prompt("Введите ваш запрос:", text),
-            args: [selectedText],
-          });
-          userPrompt = results[0].result;
-        } else {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => prompt("Введите ваш запрос:"),
-          });
-          userPrompt = results[0].result;
-        }
+        const promptText = selectedText
+          ? "Введите ваш запрос по выделенному тексту:"
+          : "Введите ваш запрос:";
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (text) => prompt(text),
+          args: [promptText],
+        });
+        userPrompt = results[0]?.result;
       } catch (error) {
         console.error("Ошибка при запросе ввода от пользователя:", error);
         displayModal(tab.id, "Не удалось получить запрос от пользователя.", true);
         return;
       }
-      
+
       if (userPrompt) {
         let finalPrompt = userPrompt;
+        
+        // Если был выделенный текст, добавляем его в промпт
+        if (selectedText) {
+          finalPrompt = `${userPrompt}: "${selectedText}"`;
+        }
         
         // Добавляем глобальный промпт, если он есть
         if (globalPrompt) {
