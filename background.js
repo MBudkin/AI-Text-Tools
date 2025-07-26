@@ -738,10 +738,17 @@ function updateModalContent(tabId, newContent) {
  */
 async function handleUserPrompt(tab, { promptText, selectionText = "" }) {
   // Получаем последний пользовательский запрос для prefill
-  const { lastUserPrompt } = await new Promise(resolve =>
-    chrome.storage.local.get(["lastUserPrompt"], resolve)
+  const { lastUserPrompt, lastUserPromptTime } = await new Promise(resolve =>
+    chrome.storage.local.get(["lastUserPrompt", "lastUserPromptTime"], resolve)
   );
-  const prefill = lastUserPrompt || "";
+  let prefill = "";
+  const now = Date.now();
+  if (lastUserPrompt && lastUserPromptTime && now - lastUserPromptTime < 10 * 60 * 1000) {
+    prefill = lastUserPrompt;
+  } else if (lastUserPrompt || lastUserPromptTime) {
+    // Если прошло больше 10 минут — очищаем память
+    chrome.storage.local.remove(["lastUserPrompt", "lastUserPromptTime"]);
+  }
 
   // Показываем prompt с нужным текстом и prefill
   let results;
@@ -763,8 +770,8 @@ async function handleUserPrompt(tab, { promptText, selectionText = "" }) {
   }
   if (!userPrompt) return null;
 
-  // Всегда сохраняем последний пользовательский запрос (без контекста)
-  chrome.storage.local.set({ lastUserPrompt: userPrompt });
+  // Всегда сохраняем последний пользовательский запрос (без контекста) и время
+  chrome.storage.local.set({ lastUserPrompt: userPrompt, lastUserPromptTime: Date.now() });
 
   // Формируем итоговый промпт
   let finalPrompt = userPrompt;
