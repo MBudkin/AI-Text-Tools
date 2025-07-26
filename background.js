@@ -822,7 +822,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 // Функция для добавления записи в историю запросов с учётом настраиваемого количества записей
-function addToHistory(query, response) {
+function addToHistory(query, response, model) {
   // Сначала проверяем historyLimit
   chrome.storage.sync.get(['historyLimit'], (data) => { // Изменено на storage.sync
     const historyLimit = typeof data.historyLimit === 'number' ? data.historyLimit : 20;
@@ -841,7 +841,8 @@ function addToHistory(query, response) {
       date: timestamp.toLocaleDateString(),
       time: timestamp.toLocaleTimeString(),
       query: query,
-      response: response
+      response: response,
+      model: model || ""
     };
 
     // Получаем текущую историю
@@ -986,7 +987,7 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
       }
 
       // Добавляем запись в историю и обновляем список недавних моделей
-      addToHistory(prompt, accumulatedText);
+      addToHistory(prompt, accumulatedText, apiModel);
       updateRecentModels(apiModel); // <-- Обновляем недавние модели
     })
     .catch(error => {

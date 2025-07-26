@@ -23,7 +23,7 @@ function loadHistory() {
       if (historyLimit === 0) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 4;
+        cell.colSpan = 5;
         cell.textContent = "История отключена.";
         cell.style.textAlign = "center";
         row.appendChild(cell);
@@ -34,7 +34,7 @@ function loadHistory() {
       if (history.length === 0) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 4;
+        cell.colSpan = 5;
         cell.textContent = "История пуста.";
         cell.style.textAlign = "center";
         row.appendChild(cell);
@@ -52,6 +52,10 @@ function loadHistory() {
         const timeCell = document.createElement("td");
         timeCell.textContent = entry.time;
         row.appendChild(timeCell);
+
+        const modelCell = document.createElement("td");
+        modelCell.textContent = entry.model || "";
+        row.appendChild(modelCell);
 
         const queryCell = document.createElement("td");
         const queryPre = document.createElement("pre");
