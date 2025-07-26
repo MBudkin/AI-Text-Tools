@@ -125,21 +125,44 @@ document.getElementById("save").addEventListener("click", () => {
     return;
   }
 
-  chrome.storage.sync.set({
-    apiKey,
-    apiServer,
-    apiModel,
-    globalPrompt,
-    menuItems,
-    historyLimit
-  }, () => {
-    // Отправляем сообщение в background.js для обновления контекстного меню
-    chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error(chrome.runtime.lastError);
-      } else {
-        alert("Настройки сохранены!");
+  // Сначала обновляем список недавних моделей
+  chrome.storage.sync.get(["recentModels"], (data) => {
+    let recentModels = data.recentModels || [];
+    if (apiModel) {
+      recentModels = recentModels.filter(m => m !== apiModel);
+      recentModels.unshift(apiModel);
+      if (recentModels.length > 5) {
+        recentModels = recentModels.slice(0, 5);
       }
+    }
+
+    // Затем сохраняем все настройки
+    chrome.storage.sync.set({
+      apiKey,
+      apiServer,
+      apiModel,
+      globalPrompt,
+      menuItems,
+      historyLimit,
+      recentModels
+    }, () => {
+      // Обновляем datalist на странице
+      const recentModelsList = document.getElementById("recent-models-list");
+      recentModelsList.innerHTML = "";
+      recentModels.forEach(model => {
+        const option = document.createElement("option");
+        option.value = model;
+        recentModelsList.appendChild(option);
+      });
+
+      // Отправляем сообщение в background.js для обновления контекстного меню
+      chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error(chrome.runtime.lastError);
+        } else {
+          alert("Настройки сохранены!");
+        }
+      });
     });
   });
 });

@@ -6,6 +6,8 @@
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
     label, input, select, textarea, button { display: block; margin: 10px 0; }
+    input[type="text"], input[type="password"], textarea { width: 400px; padding: 5px; }
+    textarea#globalPrompt { height: 60px; }
     #menu-items { margin-top: 20px; }
     #menu-items label { font-weight: bold; margin-top: 20px; }
     .menu-item { display: flex; align-items: center; margin-bottom: 10px; }
@@ -73,7 +75,7 @@
   <datalist id="recent-models-list"></datalist>
 
   <label for="globalPrompt">Глобальный промпт (будет добавлен ко всем запросам):</label>
-  <textarea id="globalPrompt" rows="3" placeholder="Введите здесь промпт, который будет применяться ко всем запросам..."></textarea>
+  <textarea id="globalPrompt" placeholder="Введите здесь промпт, который будет применяться ко всем запросам..."></textarea>
   
   <h2>Рекомендации</h2>
     <p>
