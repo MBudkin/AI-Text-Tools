@@ -157,7 +157,7 @@ function addCopyButtons() {
     
     // Создаем кнопку "Копировать"
     const copyButton = document.createElement("button");
-    copyButton.innerText = "Копировать";
+    copyButton.innerHTML = "📋";
     copyButton.className = "copy-button";
     
     // Оборачиваем блок кода в контейнер с относительным позиционированием
@@ -415,8 +415,8 @@ function displayModal(tabId, message, isError = false) {
             position: absolute;
             top: 5px;
             right: 5px;
-            padding: 5px 10px;
-            font-size: 12px;
+            padding: 2px 6px;
+            font-size: 16px;
             cursor: pointer;
             background-color: #4CAF50;
             color: #ffffff;
@@ -640,8 +640,8 @@ function initializeModal(tabId, isError = false) {
             position: absolute;
             top: 5px;
             right: 5px;
-            padding: 5px 10px;
-            font-size: 12px;
+            padding: 2px 6px;
+            font-size: 16px;
             cursor: pointer;
             background-color: #4CAF50;
             color: #ffffff;
@@ -679,7 +679,7 @@ function updateModalContent(tabId, newContent) {
           
           // Создаем кнопку "Копировать"
           const copyButton = document.createElement("button");
-          copyButton.innerText = "Копировать";
+          copyButton.innerHTML = "📋";
           copyButton.className = "copy-button";
           
           // Оборачиваем блок кода в контейнер с относительным позиционированием
