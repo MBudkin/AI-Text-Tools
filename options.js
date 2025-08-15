@@ -1,18 +1,27 @@
 let menuItems = [];
 
 document.addEventListener("DOMContentLoaded", () => {
-  // Загрузка настроек и пунктов меню
-  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit"], (settings) => {
+  // Загрузка всех настроек
+  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit", "globalPrompt", "recentModels"], (settings) => {
     document.getElementById("apiKey").value = settings.apiKey || "";
     document.getElementById("apiServer").value = settings.apiServer || "https://api.openai.com/v1";
     document.getElementById("apiModel").value = settings.apiModel || "gpt-4";
-    
+    document.getElementById("globalPrompt").value = settings.globalPrompt || "";
+
     menuItems = settings.menuItems || [];
     displayMenuItems();
 
-    // Загрузка настройки historyLimit
     const historyLimitInput = document.getElementById("historyLimit");
     historyLimitInput.value = typeof settings.historyLimit === "number" ? settings.historyLimit : 20;
+
+    // Загрузка и отображение последних моделей
+    const recentModelsList = document.getElementById("recent-models-list");
+    const recentModels = settings.recentModels || [];
+    recentModels.forEach(model => {
+      const option = document.createElement("option");
+      option.value = model;
+      recentModelsList.appendChild(option);
+    });
   });
 });
 
@@ -28,6 +37,7 @@ function displayMenuItems() {
     titleInput.type = "text";
     titleInput.placeholder = "Название пункта меню";
     titleInput.value = item.title;
+    titleInput.className = "title-input";
     titleInput.addEventListener("input", () => {
       item.title = titleInput.value;
     });
@@ -36,8 +46,18 @@ function displayMenuItems() {
     promptInput.placeholder = "Промпт для этого пункта меню";
     promptInput.value = item.prompt;
     promptInput.rows = 2;
+    promptInput.className = "prompt-input";
     promptInput.addEventListener("input", () => {
       item.prompt = promptInput.value;
+    });
+
+    const modelInput = document.createElement("input");
+    modelInput.type = "text";
+    modelInput.placeholder = "Модель (по умолч. из настроек)";
+    modelInput.value = item.model || "";
+    modelInput.className = "model-input";
+    modelInput.addEventListener("input", () => {
+      item.model = modelInput.value;
     });
 
     const moveButtonsDiv = document.createElement("div");
@@ -71,6 +91,7 @@ function displayMenuItems() {
 
     itemDiv.appendChild(titleInput);
     itemDiv.appendChild(promptInput);
+    itemDiv.appendChild(modelInput);
     itemDiv.appendChild(moveButtonsDiv);
     itemDiv.appendChild(deleteButton);
 
@@ -96,28 +117,52 @@ document.getElementById("save").addEventListener("click", () => {
   const apiKey = document.getElementById("apiKey").value;
   const apiServer = document.getElementById("apiServer").value;
   const apiModel = document.getElementById("apiModel").value;
+  const globalPrompt = document.getElementById("globalPrompt").value;
   const historyLimit = parseInt(document.getElementById("historyLimit").value, 10);
 
-  // Валидация значения historyLimit
   if (isNaN(historyLimit) || historyLimit < 0 || historyLimit > 1000) {
     alert("Пожалуйста, введите корректное число для количества записей в истории (0-1000).");
     return;
   }
 
-  chrome.storage.sync.set({ 
-    apiKey, 
-    apiServer, 
-    apiModel, 
-    menuItems,
-    historyLimit 
-  }, () => {
-    // Отправляем сообщение в background.js для обновления контекстного меню
-    chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error(chrome.runtime.lastError);
-      } else {
-        alert("Настройки сохранены!");
+  // Сначала обновляем список недавних моделей
+  chrome.storage.sync.get(["recentModels"], (data) => {
+    let recentModels = data.recentModels || [];
+    if (apiModel) {
+      recentModels = recentModels.filter(m => m !== apiModel);
+      recentModels.unshift(apiModel);
+      if (recentModels.length > 5) {
+        recentModels = recentModels.slice(0, 5);
       }
+    }
+
+    // Затем сохраняем все настройки
+    chrome.storage.sync.set({
+      apiKey,
+      apiServer,
+      apiModel,
+      globalPrompt,
+      menuItems,
+      historyLimit,
+      recentModels
+    }, () => {
+      // Обновляем datalist на странице
+      const recentModelsList = document.getElementById("recent-models-list");
+      recentModelsList.innerHTML = "";
+      recentModels.forEach(model => {
+        const option = document.createElement("option");
+        option.value = model;
+        recentModelsList.appendChild(option);
+      });
+
+      // Отправляем сообщение в background.js для обновления контекстного меню
+      chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error(chrome.runtime.lastError);
+        } else {
+          alert("Настройки сохранены!");
+        }
+      });
     });
   });
 });
@@ -127,20 +172,21 @@ document.getElementById("saveHistoryLimit").addEventListener("click", () => {
   const apiKey = document.getElementById("apiKey").value;
   const apiServer = document.getElementById("apiServer").value;
   const apiModel = document.getElementById("apiModel").value;
+  const globalPrompt = document.getElementById("globalPrompt").value;
   const historyLimit = parseInt(document.getElementById("historyLimit").value, 10);
 
-  // Валидация значения historyLimit
   if (isNaN(historyLimit) || historyLimit < 0 || historyLimit > 1000) {
     alert("Пожалуйста, введите корректное число для количества записей в истории (0-1000).");
     return;
   }
 
-  chrome.storage.sync.set({ 
-    apiKey, 
-    apiServer, 
-    apiModel, 
+  chrome.storage.sync.set({
+    apiKey,
+    apiServer,
+    apiModel,
+    globalPrompt,
     menuItems,
-    historyLimit 
+    historyLimit
   }, () => {
     // Отправляем сообщение в background.js для обновления контекстного меню
     chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
@@ -158,7 +204,7 @@ document.getElementById("saveHistoryLimit").addEventListener("click", () => {
 
 // Функция для экспорта настроек
 document.getElementById("export").addEventListener("click", () => {
-  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit"], (settings) => {
+  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit", "globalPrompt", "recentModels"], (settings) => {
     const dataStr = JSON.stringify(settings, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -196,8 +242,9 @@ document.getElementById("import").addEventListener("click", () => {
         typeof importedSettings.historyLimit === "number" &&
         importedSettings.historyLimit >= 0 &&
         importedSettings.historyLimit <= 1000
+        // Не будем строго проверять наличие globalPrompt и recentModels для обратной совместимости
       ) {
-        chrome.storage.sync.set(importedSettings, () => { // Изменено на storage.sync
+        chrome.storage.sync.set(importedSettings, () => {
           // Отправляем сообщение в background.js для обновления контекстного меню
           chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
             if (chrome.runtime.lastError) {
@@ -209,11 +256,21 @@ document.getElementById("import").addEventListener("click", () => {
               document.getElementById("apiKey").value = importedSettings.apiKey || "";
               document.getElementById("apiServer").value = importedSettings.apiServer || "https://api.openai.com/v1";
               document.getElementById("apiModel").value = importedSettings.apiModel || "gpt-4";
+              document.getElementById("globalPrompt").value = importedSettings.globalPrompt || "";
               
               menuItems = importedSettings.menuItems || [];
               displayMenuItems();
 
               document.getElementById("historyLimit").value = importedSettings.historyLimit || 20;
+
+              const recentModelsList = document.getElementById("recent-models-list");
+              recentModelsList.innerHTML = "";
+              const recentModels = importedSettings.recentModels || [];
+              recentModels.forEach(model => {
+                const option = document.createElement("option");
+                option.value = model;
+                recentModelsList.appendChild(option);
+              });
             }
           });
         });

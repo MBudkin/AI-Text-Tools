@@ -157,7 +157,7 @@ function addCopyButtons() {
     
     // Создаем кнопку "Копировать"
     const copyButton = document.createElement("button");
-    copyButton.innerText = "Копировать";
+    copyButton.innerHTML = "📋";
     copyButton.className = "copy-button";
     
     // Оборачиваем блок кода в контейнер с относительным позиционированием
@@ -415,8 +415,8 @@ function displayModal(tabId, message, isError = false) {
             position: absolute;
             top: 5px;
             right: 5px;
-            padding: 5px 10px;
-            font-size: 12px;
+            padding: 2px 6px;
+            font-size: 16px;
             cursor: pointer;
             background-color: #4CAF50;
             color: #ffffff;
@@ -555,7 +555,7 @@ function initializeModal(tabId, isError = false) {
         closeButton.style.color = "#ffffff";
         closeButton.addEventListener("click", () => overlay.remove());
 
-        // Создаём контейнер дл�� кнопок с Flexbox
+        // Создаём контейнер для кнопок с Flexbox
         const buttonsContainer = document.createElement("div");
         buttonsContainer.style.display = "flex";
         buttonsContainer.style.justifyContent = "center"; // Центрирование кнопок
@@ -640,8 +640,8 @@ function initializeModal(tabId, isError = false) {
             position: absolute;
             top: 5px;
             right: 5px;
-            padding: 5px 10px;
-            font-size: 12px;
+            padding: 2px 6px;
+            font-size: 16px;
             cursor: pointer;
             background-color: #4CAF50;
             color: #ffffff;
@@ -679,7 +679,7 @@ function updateModalContent(tabId, newContent) {
           
           // Создаем кнопку "Копировать"
           const copyButton = document.createElement("button");
-          copyButton.innerText = "Копировать";
+          copyButton.innerHTML = "📋";
           copyButton.className = "copy-button";
           
           // Оборачиваем блок кода в контейнер с относительным позиционированием
@@ -733,6 +733,54 @@ function updateModalContent(tabId, newContent) {
   });
 }
 
+/**
+ * Универсальная функция для показа prompt с автозаполнением и сохранением последнего запроса
+ */
+async function handleUserPrompt(tab, { promptText, selectionText = "" }) {
+  // Получаем последний пользовательский запрос для prefill
+  const { lastUserPrompt, lastUserPromptTime } = await new Promise(resolve =>
+    chrome.storage.local.get(["lastUserPrompt", "lastUserPromptTime"], resolve)
+  );
+  let prefill = "";
+  const now = Date.now();
+  if (lastUserPrompt && lastUserPromptTime && now - lastUserPromptTime < 10 * 60 * 1000) {
+    prefill = lastUserPrompt;
+  } else if (lastUserPrompt || lastUserPromptTime) {
+    // Если прошло больше 10 минут — очищаем память
+    chrome.storage.local.remove(["lastUserPrompt", "lastUserPromptTime"]);
+  }
+
+  // Показываем prompt с нужным текстом и prefill
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (text, prefill) => prompt(text, prefill),
+      args: [promptText, prefill],
+    });
+  } catch (err) {
+    console.error("Ошибка вызова chrome.scripting.executeScript для prompt:", err);
+    return null;
+  }
+  console.log("Результат prompt через scripting.executeScript:", results);
+  const userPrompt = results && results[0] ? results[0].result : undefined;
+  if (typeof userPrompt === "undefined") {
+    console.error("Не удалось получить результат prompt. Возможно, prompt не сработал в данном контексте.");
+    return null;
+  }
+  if (!userPrompt) return null;
+
+  // Всегда сохраняем последний пользовательский запрос (без контекста) и время
+  chrome.storage.local.set({ lastUserPrompt: userPrompt, lastUserPromptTime: Date.now() });
+
+  // Формируем итоговый промпт
+  let finalPrompt = userPrompt;
+  if (selectionText) {
+    finalPrompt = `${userPrompt}: "${selectionText}"`;
+  }
+  return { userPrompt, finalPrompt };
+}
+
 // Обработчик кликов на пункты меню
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   try {
@@ -746,62 +794,58 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       }
     }
 
-    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems"], async (settings) => {
-      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4", menuItems } = settings;
+    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "globalPrompt"], async (settings) => {
+      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4", menuItems, globalPrompt } = settings;
 
       if (!apiKey) {
         displayModal(tab.id, "API-ключ не задан в настройках.", true);
         return;
       }
 
-      if (info.menuItemId === "custom-prompt" && info.selectionText) {
-        // Обработка пользовательского запроса с выделенным текстом
-        try {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-              const userPrompt = prompt("Введите ваш запрос:");
-              return userPrompt;
-            },
-          });
-          const userPrompt = results[0].result;
-          if (userPrompt) {
-            let prompt = `${userPrompt}: "{{selectionText}}"`;
-            prompt = prompt.replace(/{{selectionText}}/g, info.selectionText);
+      let finalPrompt = "";
+      let finalModel = apiModel; // Модель по умолчанию
 
-            processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
-          }
+      if (info.menuItemId === "custom-prompt" && info.selectionText) {
+        try {
+          const promptText = info.selectionText
+            ? "Введите ваш запрос по выделенному тексту:"
+            : "Введите ваш запрос:";
+          const result = await handleUserPrompt(tab, { promptText, selectionText: info.selectionText });
+          if (!result) return;
+          finalPrompt = result.finalPrompt;
         } catch (error) {
           console.error("Ошибка при получении пользовательского запроса:", error);
           displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
+          return;
         }
       } else if (info.menuItemId === "ask-ai") {
-        // Обработка запроса без выделенного текста
         try {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-              const userPrompt = prompt("Введите ваш запрос:");
-              return userPrompt;
-            },
-          });
-          const userPrompt = results[0].result;
-          if (userPrompt) {
-            let prompt = userPrompt;
-            processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
-          }
+          const result = await handleUserPrompt(tab, { promptText: "Введите ваш запрос:" });
+          if (!result) return;
+          finalPrompt = result.finalPrompt;
         } catch (error) {
           console.error("Ошибка при получении пользовательского запроса:", error);
           displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
+          return;
         }
-      } else if (info.menuItemId && info.selectionText) {
-        // Поиск выбранного пункта меню
-        const menuItem = menuItems.find((item, index) => `menu-item-${index}` === info.menuItemId);
+      } else if (info.menuItemId.startsWith("menu-item-") && info.selectionText) {
+        const menuItemIndex = parseInt(info.menuItemId.replace("menu-item-", ""), 10);
+        const menuItem = menuItems[menuItemIndex];
         if (menuItem) {
-          let prompt = menuItem.prompt;
-          prompt = prompt.replace(/{{selectionText}}/g, info.selectionText);
-          processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
+          finalPrompt = menuItem.prompt.replace(/{{selectionText}}/g, info.selectionText);
+          if (menuItem.model && menuItem.model.trim() !== "") {
+            finalModel = menuItem.model; // Используем кастомную модель, если она задана
+          }
         }
+      }
+
+      // Добавляем глобальный промпт, если он есть
+      if (globalPrompt && finalPrompt) {
+        finalPrompt = `${globalPrompt}\n\n${finalPrompt}`;
+      }
+
+      if (finalPrompt) {
+        processPrompt(tab.id, apiServer, apiKey, finalModel, finalPrompt);
       }
     });
   } catch (error) {
@@ -813,7 +857,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 // Функция для добавления записи в историю запросов с учётом настраиваемого количества записей
-function addToHistory(query, response) {
+function addToHistory(query, response, model) {
   // Сначала проверяем historyLimit
   chrome.storage.sync.get(['historyLimit'], (data) => { // Изменено на storage.sync
     const historyLimit = typeof data.historyLimit === 'number' ? data.historyLimit : 20;
@@ -832,7 +876,8 @@ function addToHistory(query, response) {
       date: timestamp.toLocaleDateString(),
       time: timestamp.toLocaleTimeString(),
       query: query,
-      response: response
+      response: response,
+      model: model || ""
     };
 
     // Получаем текущую историю
@@ -855,7 +900,26 @@ function addToHistory(query, response) {
   });
 }
 
-// Обновлённая функция processPrompt с добавленным вызовом addToHistory
+// Функция для обновления списка последних использованных моделей
+function updateRecentModels(model) {
+  if (!model) return;
+
+  chrome.storage.sync.get(["recentModels"], (data) => {
+    let recentModels = data.recentModels || [];
+    // Удаляем модель, если она уже есть, чтобы переместить ее в начало
+    recentModels = recentModels.filter(m => m !== model);
+    // Добавляем модель в начало
+    recentModels.unshift(model);
+    // Оставляем только 5 последних
+    if (recentModels.length > 5) {
+      recentModels = recentModels.slice(0, 5);
+    }
+    // Сохраняем
+    chrome.storage.sync.set({ recentModels });
+  });
+}
+
+// Обновлённая функция processPrompt с добавленным вызовом addToHistory и updateRecentModels
 function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
   showLoadingIndicator(tabId); // Показать индикатор
 
@@ -945,7 +1009,7 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
           if (jsonStr && jsonStr !== '[DONE]') {
             try {
               const json = JSON.parse(jsonStr);
-              const delta = json.choices?.[0]?.delta?.content;
+                const delta = json.choices?.[0]?.delta?.content;
               if (delta) {
                 accumulatedText += delta;
                 updateModalContent(tabId, accumulatedText);
@@ -957,8 +1021,9 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
         }
       }
 
-      // Добавляем запись в историю после успешного получения ответа
-      addToHistory(prompt, accumulatedText);
+      // Добавляем запись в историю и обновляем список недавних моделей
+      addToHistory(prompt, accumulatedText, apiModel);
+      updateRecentModels(apiModel); // <-- Обновляем недавние модели
     })
     .catch(error => {
       console.error("Ошибка обработки запроса:", error);
@@ -968,8 +1033,6 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
     });
   // Удаляем вызов removeLoadingIndicator из блока finally
 }
-
-// Остальной код background.js остается без изменений
 
 // Обработчик нажатия на значок расширения
 chrome.action.onClicked.addListener(async (tab) => {
@@ -984,8 +1047,8 @@ chrome.action.onClicked.addListener(async (tab) => {
     }
 
     // Получаем настройки из хранилища
-    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel"], async (settings) => {
-      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4" } = settings;
+    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "globalPrompt"], async (settings) => {
+      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4", globalPrompt } = settings;
 
       if (!apiKey) {
         displayModal(tab.id, "API-ключ не задан в настройках.", true);
@@ -999,53 +1062,29 @@ chrome.action.onClicked.addListener(async (tab) => {
       });
       const selectedText = selectionResults[0]?.result || "";
 
-      if (selectedText) {
-        // Если есть выделенный текст – логика "Свой запрос..."
-        try {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-              const userPrompt = prompt("Введите ваш запрос для выделенного текста:");
-              return userPrompt;
-            },
-          });
-          const userPrompt = results[0].result;
-          if (userPrompt) {
-            let prompt = `${userPrompt}: "{{selectionText}}"`;
-            prompt = prompt.replace(/{{selectionText}}/g, selectedText);
-
-            processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
-          }
-        } catch (error) {
-          console.error("Ошибка при получении пользовательского запроса:", error);
-          displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
+      let userPrompt;
+      try {
+        const promptText = selectedText
+          ? "Введите ваш запрос по выделенному тексту:"
+          : "Введите ваш запрос:";
+        const result = await handleUserPrompt(tab, { promptText, selectionText: selectedText });
+        if (!result) return;
+        let finalPrompt = result.finalPrompt;
+        // Добавляем глобальный промпт, если он есть
+        if (globalPrompt) {
+          finalPrompt = `${globalPrompt}\n\n${finalPrompt}`;
         }
-      } else {
-        // Если выделенного текста нет – логика "Спросить AI"
-        try {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-              const userPrompt = prompt("Введите ваш запрос:");
-              return userPrompt;
-            },
-          });
-          const userPrompt = results[0].result;
-          if (userPrompt) {
-            let prompt = userPrompt;
-            processPrompt(tab.id, apiServer, apiKey, apiModel, prompt);
-          }
-        } catch (error) {
-          console.error("Ошибка при получении пользовательского запроса:", error);
-          displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
-        }
+        processPrompt(tab.id, apiServer, apiKey, apiModel, finalPrompt);
+      } catch (error) {
+        console.error("Ошибка при запросе ввода от пользователя:", error);
+        displayModal(tab.id, "Не удалось получить запрос от пользователя.", true);
+        return;
       }
     });
   } catch (error) {
-    console.error("Ошибка обработки запроса:", error);
+    console.error("Ошибка при обработке нажатия на значок:", error);
     if (tab && tab.id) {
       displayModal(tab.id, `Произошла ошибка: ${error.message}`, true);
     }
   }
 });
-

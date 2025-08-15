@@ -6,11 +6,15 @@
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
     label, input, select, textarea, button { display: block; margin: 10px 0; }
+    input[type="text"], input[type="password"], textarea { width: 400px; padding: 5px; }
+    textarea#globalPrompt { height: 60px; }
     #menu-items { margin-top: 20px; }
     #menu-items label { font-weight: bold; margin-top: 20px; }
     .menu-item { display: flex; align-items: center; margin-bottom: 10px; }
-    .menu-item input[type="text"] { flex: 1; margin-right: 10px; }
-    .menu-item textarea { flex: 2; margin-right: 10px; }
+    .menu-item input[type="text"], .menu-item textarea { margin-right: 10px; }
+    .menu-item .title-input { flex: 1; }
+    .menu-item .prompt-input { flex: 2; }
+    .menu-item .model-input { flex: 1; }
     .menu-item button { margin-left: 5px; }
     #import-section { margin-top: 20px; }
     .move-buttons { display: flex; flex-direction: column; }
@@ -66,10 +70,14 @@
   <label for="apiKey">API-ключ:</label>
   <input id="apiKey" type="password" placeholder="API-ключ" />
   
-  <label for="apiModel">Модель:</label>
-  <input id="apiModel" type="text" placeholder="Модель, например, gpt-4o" />
+  <label for="apiModel">Модель (по умолчанию):</label>
+  <input id="apiModel" type="text" placeholder="Модель, например, gpt-4o" list="recent-models-list" />
+  <datalist id="recent-models-list"></datalist>
+
+  <label for="globalPrompt">Глобальный промпт (будет добавлен ко всем запросам):</label>
+  <textarea id="globalPrompt" placeholder="Введите здесь промпт, который будет применяться ко всем запросам..."></textarea>
   
-    <h2>Рекомендации</h2>
+  <h2>Рекомендации</h2>
     <p>
 	<b>Рекомендую назначить горячие клавиши в настройках:</b><br>	
 	1) "chrome://extensions/shortcuts" - скопируйте, вставьте в браузер и перейдите по ссылке.<br>
