@@ -2,11 +2,11 @@ let menuItems = [];
 
 document.addEventListener("DOMContentLoaded", () => {
   // Загрузка всех настроек
-  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit", "globalPrompt", "recentModels"], (settings) => {
+  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit", "systemPrompt", "recentModels"], (settings) => {
     document.getElementById("apiKey").value = settings.apiKey || "";
     document.getElementById("apiServer").value = settings.apiServer || "https://api.openai.com/v1";
     document.getElementById("apiModel").value = settings.apiModel || "gpt-4";
-    document.getElementById("globalPrompt").value = settings.globalPrompt || "";
+    document.getElementById("systemPrompt").value = settings.systemPrompt || "";
 
     menuItems = settings.menuItems || [];
     displayMenuItems();
@@ -117,7 +117,7 @@ document.getElementById("save").addEventListener("click", () => {
   const apiKey = document.getElementById("apiKey").value;
   const apiServer = document.getElementById("apiServer").value;
   const apiModel = document.getElementById("apiModel").value;
-  const globalPrompt = document.getElementById("globalPrompt").value;
+  const systemPrompt = document.getElementById("systemPrompt").value;
   const historyLimit = parseInt(document.getElementById("historyLimit").value, 10);
 
   if (isNaN(historyLimit) || historyLimit < 0 || historyLimit > 1000) {
@@ -141,7 +141,7 @@ document.getElementById("save").addEventListener("click", () => {
       apiKey,
       apiServer,
       apiModel,
-      globalPrompt,
+      systemPrompt,
       menuItems,
       historyLimit,
       recentModels
@@ -172,7 +172,7 @@ document.getElementById("saveHistoryLimit").addEventListener("click", () => {
   const apiKey = document.getElementById("apiKey").value;
   const apiServer = document.getElementById("apiServer").value;
   const apiModel = document.getElementById("apiModel").value;
-  const globalPrompt = document.getElementById("globalPrompt").value;
+  const systemPrompt = document.getElementById("systemPrompt").value;
   const historyLimit = parseInt(document.getElementById("historyLimit").value, 10);
 
   if (isNaN(historyLimit) || historyLimit < 0 || historyLimit > 1000) {
@@ -184,7 +184,7 @@ document.getElementById("saveHistoryLimit").addEventListener("click", () => {
     apiKey,
     apiServer,
     apiModel,
-    globalPrompt,
+    systemPrompt,
     menuItems,
     historyLimit
   }, () => {
@@ -204,7 +204,7 @@ document.getElementById("saveHistoryLimit").addEventListener("click", () => {
 
 // Функция для экспорта настроек
 document.getElementById("export").addEventListener("click", () => {
-  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit", "globalPrompt", "recentModels"], (settings) => {
+  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit", "systemPrompt", "recentModels"], (settings) => {
     const dataStr = JSON.stringify(settings, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -256,7 +256,7 @@ document.getElementById("import").addEventListener("click", () => {
               document.getElementById("apiKey").value = importedSettings.apiKey || "";
               document.getElementById("apiServer").value = importedSettings.apiServer || "https://api.openai.com/v1";
               document.getElementById("apiModel").value = importedSettings.apiModel || "gpt-4";
-              document.getElementById("globalPrompt").value = importedSettings.globalPrompt || "";
+              document.getElementById("systemPrompt").value = importedSettings.systemPrompt || "";
               
               menuItems = importedSettings.menuItems || [];
               displayMenuItems();

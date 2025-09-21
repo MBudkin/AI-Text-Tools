@@ -1,3 +1,13 @@
+// Функция для замены плейсхолдеров в промпте
+function replacePlaceholders(prompt, selectionText = '') {
+  const now = new Date();
+  const date = now.toLocaleDateString('ru-RU');
+  const time = now.toLocaleTimeString('ru-RU');
+  return prompt
+    .replace(/\{\{date\}\}/g, date)
+    .replace(/\{\{time\}\}/g, time)
+    .replace(/\{\{selectionText\}\}/g, selectionText);
+}
 // Функция для создания пунктов контекстного меню
 function createContextMenuItems(menuItems) {
   chrome.contextMenus.removeAll(() => {
@@ -774,11 +784,12 @@ async function handleUserPrompt(tab, { promptText, selectionText = "" }) {
   chrome.storage.local.set({ lastUserPrompt: userPrompt, lastUserPromptTime: Date.now() });
 
   // Формируем итоговый промпт
-  let finalPrompt = userPrompt;
+  let processedUserPrompt = replacePlaceholders(userPrompt);
+  let finalPrompt = processedUserPrompt;
   if (selectionText) {
-    finalPrompt = `${userPrompt}: "${selectionText}"`;
+    finalPrompt = `${processedUserPrompt}: "${selectionText}"`;
   }
-  return { userPrompt, finalPrompt };
+  return { userPrompt: processedUserPrompt, finalPrompt };
 }
 
 // Обработчик кликов на пункты меню
@@ -794,8 +805,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       }
     }
 
-    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "globalPrompt"], async (settings) => {
-      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4", menuItems, globalPrompt } = settings;
+    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "systemPrompt"], async (settings) => {
+      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4", menuItems, systemPrompt } = settings;
 
       if (!apiKey) {
         displayModal(tab.id, "API-ключ не задан в настройках.", true);
@@ -832,20 +843,20 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         const menuItemIndex = parseInt(info.menuItemId.replace("menu-item-", ""), 10);
         const menuItem = menuItems[menuItemIndex];
         if (menuItem) {
-          finalPrompt = menuItem.prompt.replace(/{{selectionText}}/g, info.selectionText);
+          finalPrompt = replacePlaceholders(menuItem.prompt, info.selectionText);
           if (menuItem.model && menuItem.model.trim() !== "") {
             finalModel = menuItem.model; // Используем кастомную модель, если она задана
           }
         }
       }
 
-      // Добавляем глобальный промпт, если он есть
-      if (globalPrompt && finalPrompt) {
-        finalPrompt = `${globalPrompt}\n\n${finalPrompt}`;
+      let systemContent = '';
+      if (systemPrompt) {
+        systemContent = replacePlaceholders(systemPrompt);
       }
 
       if (finalPrompt) {
-        processPrompt(tab.id, apiServer, apiKey, finalModel, finalPrompt);
+        processPrompt(tab.id, apiServer, apiKey, finalModel, finalPrompt, systemContent);
       }
     });
   } catch (error) {
@@ -920,13 +931,17 @@ function updateRecentModels(model) {
 }
 
 // Обновлённая функция processPrompt с добавленным вызовом addToHistory и updateRecentModels
-function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
+function processPrompt(tabId, apiServer, apiKey, apiModel, userPrompt, systemPrompt = '') {
   showLoadingIndicator(tabId); // Показать индикатор
 
   // Включаем режим стриминга
+  let messages = [{ role: "user", content: userPrompt }];
+  if (systemPrompt) {
+    messages = [{ role: "system", content: systemPrompt }, ...messages];
+  }
   const requestBody = {
     model: apiModel,
-    messages: [{ role: "user", content: prompt }],
+    messages,
     stream: true
   };
 
@@ -1022,7 +1037,7 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, prompt) {
       }
 
       // Добавляем запись в историю и обновляем список недавних моделей
-      addToHistory(prompt, accumulatedText, apiModel);
+      addToHistory(userPrompt, accumulatedText, apiModel);
       updateRecentModels(apiModel); // <-- Обновляем недавние модели
     })
     .catch(error => {
@@ -1047,8 +1062,8 @@ chrome.action.onClicked.addListener(async (tab) => {
     }
 
     // Получаем настройки из хранилища
-    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "globalPrompt"], async (settings) => {
-      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4", globalPrompt } = settings;
+    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "systemPrompt"], async (settings) => {
+      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4", systemPrompt } = settings;
 
       if (!apiKey) {
         displayModal(tab.id, "API-ключ не задан в настройках.", true);
@@ -1070,11 +1085,11 @@ chrome.action.onClicked.addListener(async (tab) => {
         const result = await handleUserPrompt(tab, { promptText, selectionText: selectedText });
         if (!result) return;
         let finalPrompt = result.finalPrompt;
-        // Добавляем глобальный промпт, если он есть
-        if (globalPrompt) {
-          finalPrompt = `${globalPrompt}\n\n${finalPrompt}`;
+        let systemContent = '';
+        if (systemPrompt) {
+          systemContent = replacePlaceholders(systemPrompt);
         }
-        processPrompt(tab.id, apiServer, apiKey, apiModel, finalPrompt);
+        processPrompt(tab.id, apiServer, apiKey, apiModel, finalPrompt, systemContent);
       } catch (error) {
         console.error("Ошибка при запросе ввода от пользователя:", error);
         displayModal(tab.id, "Не удалось получить запрос от пользователя.", true);
