@@ -1,3 +1,6 @@
+let isGenerating = false;
+let currentAbortController = null;
+
 // Функция для замены плейсхолдеров в промпте
 function replacePlaceholders(prompt, selectionText = '') {
   const now = new Date();
@@ -68,6 +71,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     sendResponse({ status: "ok" });
   }
+});
+
+// Обработчик для остановки генерации
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "stopGeneration") {
+    const tabId = sender.tab ? sender.tab.id : null;
+    if (tabId) {
+      if (currentAbortController) {
+        currentAbortController.abort();
+      }
+      isGenerating = false;
+      currentAbortController = null;
+      removeLoadingIndicator(tabId);
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const overlay = document.getElementById("ai-result-modal-overlay");
+          if (overlay) {
+            overlay.remove();
+          }
+        }
+      });
+    }
+    sendResponse({ status: "stopped" });
+  }
+  return true; // Для async response если нужно
 });
 
 // Отображение индикатора загрузки с добавлением спинера
@@ -338,7 +367,10 @@ function displayModal(tabId, message, isError = false) {
         closeButton.style.borderRadius = "4px";
         closeButton.style.backgroundColor = "#f44336";
         closeButton.style.color = "#ffffff";
-        closeButton.addEventListener("click", () => overlay.remove());
+        closeButton.addEventListener("click", () => {
+          chrome.runtime.sendMessage({action: "stopGeneration"});
+          overlay.remove();
+        });
 
         // Создаём контейнер для кнопок с Flexbox
         const buttonsContainer = document.createElement("div");
@@ -360,6 +392,15 @@ function displayModal(tabId, message, isError = false) {
 
         // Добавляем оверлей в документ
         document.body.appendChild(overlay);
+
+        // Обработчик ESC
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            chrome.runtime.sendMessage({action: "stopGeneration"});
+            overlay.remove();
+          }
+        });
 
         // Добавляем стили для Markdown-элементов, таблиц и кнопок "Копировать"
         const style = document.createElement("style");
@@ -563,7 +604,10 @@ function initializeModal(tabId, isError = false) {
         closeButton.style.borderRadius = "4px";
         closeButton.style.backgroundColor = "#f44336";
         closeButton.style.color = "#ffffff";
-        closeButton.addEventListener("click", () => overlay.remove());
+        closeButton.addEventListener("click", () => {
+          chrome.runtime.sendMessage({action: "stopGeneration"});
+          overlay.remove();
+        });
 
         // Создаём контейнер для кнопок с Flexbox
         const buttonsContainer = document.createElement("div");
@@ -585,6 +629,15 @@ function initializeModal(tabId, isError = false) {
 
         // Добавляем оверлей в документ
         document.body.appendChild(overlay);
+
+        // Обработчик ESC
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            chrome.runtime.sendMessage({action: "stopGeneration"});
+            overlay.remove();
+          }
+        });
 
         // Добавляем стили для Markdown-элементов, таблиц и кнопок "Копировать"
         const style = document.createElement("style");
@@ -934,6 +987,10 @@ function updateRecentModels(model) {
 function processPrompt(tabId, apiServer, apiKey, apiModel, userPrompt, systemPrompt = '') {
   showLoadingIndicator(tabId); // Показать индикатор
 
+  const abortController = new AbortController();
+  currentAbortController = abortController;
+  isGenerating = true;
+
   // Включаем режим стриминга
   let messages = [{ role: "user", content: userPrompt }];
   if (systemPrompt) {
@@ -951,7 +1008,8 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, userPrompt, systemPro
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`
     },
-    body: JSON.stringify(requestBody)
+    body: JSON.stringify(requestBody),
+    signal: abortController.signal
   })
     .then(response => {
       if (!response.ok) {
@@ -1039,12 +1097,21 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, userPrompt, systemPro
       // Добавляем запись в историю и обновляем список недавних моделей
       addToHistory(userPrompt, accumulatedText, apiModel);
       updateRecentModels(apiModel); // <-- Обновляем недавние модели
+
+      isGenerating = false;
+      currentAbortController = null;
     })
     .catch(error => {
       console.error("Ошибка обработки запроса:", error);
+      if (error.name === 'AbortError') {
+        return;
+      }
       // Если возникла ошибка – инициализируем окно ошибки
       initializeModal(tabId, true);
       updateModalContent(tabId, `Произошла ошибка: ${error.message}`);
+
+      isGenerating = false;
+      currentAbortController = null;
     });
   // Удаляем вызов removeLoadingIndicator из блока finally
 }
