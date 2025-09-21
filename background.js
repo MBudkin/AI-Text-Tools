@@ -76,13 +76,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Обработчик для остановки генерации
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "stopGeneration") {
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
+    isGenerating = false;
+    currentAbortController = null;
     const tabId = sender.tab ? sender.tab.id : null;
     if (tabId) {
-      if (currentAbortController) {
-        currentAbortController.abort();
-      }
-      isGenerating = false;
-      currentAbortController = null;
       removeLoadingIndicator(tabId);
       chrome.scripting.executeScript({
         target: { tabId },
@@ -138,6 +138,7 @@ function showLoadingIndicator(tabId) {
         closeButton.style.fontSize = "20px";
         closeButton.style.color = "#151515";
         closeButton.addEventListener("click", () => {
+          chrome.runtime.sendMessage({action: "stopGeneration"});
           indicator.remove();
         });
 
@@ -1033,7 +1034,7 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, userPrompt, systemPro
       let isFirstChunk = true; // Флаг для первого чанка
       let buffer = ""; // Буфер для накопления данных
 
-      while (!done) {
+      while (!done && isGenerating) {
         const { value, done: doneReading } = await reader.read();
         done = doneReading;
         if (value) {
@@ -1075,7 +1076,7 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, userPrompt, systemPro
       }
 
       // Обработка оставшегося буфера, если необходимо
-      if (buffer) {
+      if (buffer && isGenerating) {
         const trimmedLine = buffer.trim();
         if (trimmedLine.startsWith('data: ')) {
           const jsonStr = trimmedLine.slice('data: '.length).trim();
@@ -1094,18 +1095,20 @@ function processPrompt(tabId, apiServer, apiKey, apiModel, userPrompt, systemPro
         }
       }
 
-      // Добавляем запись в историю и обновляем список недавних моделей
-      addToHistory(userPrompt, accumulatedText, apiModel);
-      updateRecentModels(apiModel); // <-- Обновляем недавние модели
+      // Добавляем запись в историю и обновляем список недавних моделей только если генерация не была остановлена
+      if (isGenerating) {
+        addToHistory(userPrompt, accumulatedText, apiModel);
+        updateRecentModels(apiModel); // <-- Обновляем недавние модели
+      }
 
       isGenerating = false;
       currentAbortController = null;
     })
     .catch(error => {
-      console.error("Ошибка обработки запроса:", error);
-      if (error.name === 'AbortError') {
+      if (error && (error.name === 'AbortError' || error.name === 'DOMException' || error instanceof DOMException || (error.message && error.message.includes('aborted')) || (error.toString && error.toString().includes('Abort')))) {
         return;
       }
+      console.error("Ошибка обработки запроса:", error);
       // Если возникла ошибка – инициализируем окно ошибки
       initializeModal(tabId, true);
       updateModalContent(tabId, `Произошла ошибка: ${error.message}`);
