@@ -4,35 +4,63 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AI Text Tools</title>
+  <link rel="stylesheet" href="theme.css">
+  <script src="common.js"></script>
   <style>
-    * { box-sizing: border-box; scrollbar-width:thin; scrollbar-color:#56657d transparent; }
-    ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{border-radius:999px;background:transparent}::-webkit-scrollbar-thumb{border:2px solid transparent;border-radius:999px;background:#56657d;background-clip:padding-box}::-webkit-scrollbar-thumb:hover{background:#71819b;background-clip:padding-box}
-    body { width: 330px; margin: 0; padding: 16px; color: #edf2fb; background: #111722; font: 13px/1.45 Inter, system-ui, sans-serif; }
-    body.light { color:#172033; background:#f5f7fb; } body.light *{scrollbar-color:#8190a8 #e7ebf2}body.light ::-webkit-scrollbar-track{background:#e7ebf2}body.light ::-webkit-scrollbar-thumb{border-color:#e7ebf2;background:#8190a8;background-clip:padding-box}body.light button{color:#253149;background:#fff;border-color:#cbd4e2} body.light button:hover{background:#eaf0f8;border-color:#7a6df0} body.light button.primary{color:#fff;border-color:transparent;background:linear-gradient(135deg,#6858ef,#3f6feb);box-shadow:0 3px 10px #6858ef33} body.light .meta{color:#69768c}body.light footer a{color:#3f51b5;font-weight:650}body.light footer a:hover{color:#272f86;text-decoration:underline}
-    header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-    img { width: 34px; height: 34px; }
-    h1 { margin: 0; font-size: 15px; } .meta { color: #92a0b6; font-size: 11px; }
-    .actions { display: grid; gap: 8px; }
-    button { width: 100%; padding: 10px 12px; border: 1px solid #334058; border-radius: 10px; cursor: pointer; color: #dce5f4; background: #1a2331; text-align: left; font: inherit; }
-    button:hover { border-color: #766dff; background: #26314a; } button:disabled{opacity:.55;cursor:wait}
-    button.primary { border: 0; color: #fff; background: linear-gradient(135deg,#755cff,#496dff); font-weight: 700; }
-    footer { display: flex; justify-content: space-between; margin-top: 13px; padding-top: 11px; border-top: 1px solid #283246; }
-    a { color: #8ecbff; text-decoration: none; cursor: pointer; }
-    #status { min-height: 18px; margin-top: 10px; color: #ffb8c2; font-size: 11px; }
-    .chat-list{display:grid;gap:5px;margin-top:12px;max-height:150px;overflow:auto}.chat-row{display:grid;grid-template-columns:minmax(0,1fr) 30px;gap:4px}.chat{padding:8px 10px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.delete-chat{display:grid;place-items:center;width:30px;padding:0;color:#dba6ae;background:#241b23;font-size:13px;text-align:center}.delete-chat:hover{border-color:#a94c5b;background:#3d2028}.section-title{display:flex;justify-content:space-between;margin-top:13px;color:#91a0b6;font-size:11px}.theme{width:auto;padding:0 8px;min-height:28px}body.light .delete-chat{color:#a63143;border-color:#dfc3c8;background:#fff4f5}body.light .delete-chat:hover{border-color:#b44a5b;background:#ffe8eb}
+    body{width:340px;padding:12px}
+    header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+    header img{width:32px;height:32px}
+    .heading{min-width:0;flex:1}
+    h1{margin:0;font-size:14px;font-weight:700}
+    .meta{overflow:hidden;color:var(--text-3);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+    .setup{display:flex;align-items:center;gap:9px;margin-bottom:10px;padding:9px 10px;border:1px solid color-mix(in srgb,var(--warning) 50%,transparent);border-radius:var(--radius);color:var(--warning-text);background:var(--warning-soft);font-size:12px}
+    .setup .btn{margin-left:auto;min-height:26px;padding:0 10px;font-size:12px}
+    .actions{display:grid;gap:4px}
+    .action{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;padding:0 10px;border:1px solid transparent;border-radius:var(--radius);cursor:pointer;color:var(--text);background:transparent;text-align:left}
+    .action:hover:not(:disabled){border-color:var(--border);background:var(--surface-2)}
+    .action:disabled{opacity:.5;cursor:not-allowed}
+    .action .icon-svg{color:var(--text-3)}
+    .action.primary{margin-bottom:4px;color:var(--on-accent);background:var(--gradient);font-weight:650;box-shadow:var(--shadow-sm)}
+    .action.primary .icon-svg{color:var(--on-accent)}
+    .action.primary:hover:not(:disabled){border-color:transparent;background:var(--gradient);filter:brightness(1.08)}
+    .action span{flex:1}
+    kbd{padding:1px 5px;border:1px solid var(--border-strong);border-bottom-width:2px;border-radius:4px;color:var(--text-3);background:var(--surface-2);font:10px/1.4 var(--mono);white-space:nowrap}
+    .action.primary kbd{color:var(--on-accent);border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.15)}
+    .section-title{display:flex;align-items:center;justify-content:space-between;margin:14px 2px 6px;color:var(--text-3);font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase}
+    .chat-list{display:grid;gap:2px;max-height:190px;overflow:auto}
+    .chat-row{display:flex;align-items:center;gap:2px;border-radius:var(--radius)}
+    .chat-row:hover{background:var(--surface-2)}
+    .chat{flex:1;min-width:0;display:grid;gap:1px;padding:6px 8px;border:0;border-radius:var(--radius);cursor:pointer;background:transparent;text-align:left}
+    .chat strong{overflow:hidden;font-size:12px;font-weight:550;text-overflow:ellipsis;white-space:nowrap}
+    .chat small{overflow:hidden;color:var(--text-3);font-size:10.5px;text-overflow:ellipsis;white-space:nowrap}
+    .chat-row .icon-btn{opacity:0}.chat-row:hover .icon-btn,.chat-row .icon-btn:focus-visible{opacity:1}
+    .chat-row .icon-btn:hover{color:var(--danger-text);background:var(--danger-soft)}
+    .empty{padding:8px 2px;color:var(--text-3);font-size:12px}
+    #status{min-height:0;margin-top:8px;color:var(--danger-text);font-size:11.5px}
+    #status:empty{display:none}
+    footer{display:flex;align-items:center;gap:4px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+    footer .btn{min-height:30px;padding:0 10px;font-size:12px}
+    footer .spacer{flex:1}
   </style>
 </head>
 <body>
-  <header><img src="icon48.png" alt=""><div><h1>AI Text Tools</h1><div class="meta" id="summary">Загрузка настроек…</div></div></header>
+  <header><img src="icon48.png" alt=""><div class="heading"><h1>AI Text Tools</h1><div class="meta" id="summary">Загрузка настроек…</div></div></header>
+  <div id="setup" class="setup hidden" role="alert"><span>API-ключ не задан</span><button id="setupButton" class="btn" type="button">Настроить</button></div>
   <div class="actions">
-    <button class="primary" id="openPanel">Открыть боковую панель</button>
-    <button data-action="auto">Задать вопрос</button>
-    <button data-action="page">Вопрос по всей странице</button>
-    <button data-action="summarize">Суммаризировать страницу</button>
+    <button class="action primary" id="openPanel" type="button" data-command="ask-ai"></button>
+    <button class="action" data-action="auto" data-command="" type="button"></button>
+    <button class="action" data-action="page" data-command="ask-page" type="button"></button>
+    <button class="action" data-action="summarize" data-command="summarize-page" type="button"></button>
   </div>
-  <div class="section-title"><span>Недавние чаты</span><button class="theme" id="themeToggle" title="Переключить тему">◐</button></div><div id="chats" class="chat-list"></div>
-  <div id="status"></div>
-  <footer><a id="options">Настройки</a><a id="history">История</a></footer>
+  <div class="section-title"><span>Недавние чаты</span></div>
+  <div id="chats" class="chat-list"></div>
+  <div id="status" role="alert"></div>
+  <footer>
+    <button class="btn" id="options" type="button"></button>
+    <button class="btn" id="history" type="button"></button>
+    <span class="spacer"></span>
+    <button class="icon-btn" id="themeToggle" type="button"></button>
+  </footer>
   <script src="popup.js"></script>
 </body>
 </html>

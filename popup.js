@@ -1,7 +1,31 @@
 const statusNode = document.getElementById("status");
 let activeTabId = null;
 
-document.querySelectorAll(".actions button").forEach(button => button.disabled = true);
+const ACTIONS = {
+  openPanel: { icon: "panel", label: "Открыть боковую панель" },
+  auto: { icon: "message", label: "Задать вопрос" },
+  page: { icon: "page", label: "Вопрос по всей странице" },
+  summarize: { icon: "sparkles", label: "Суммаризировать страницу" }
+};
+
+for (const button of document.querySelectorAll(".actions button")) {
+  const action = ACTIONS[button.id || button.dataset.action];
+  button.innerHTML = `${icon(action.icon)}<span>${action.label}</span>`;
+  button.disabled = true;
+}
+document.getElementById("options").innerHTML = `${icon("settings")}Настройки`;
+document.getElementById("history").innerHTML = `${icon("history")}История`;
+bindThemeButton(document.getElementById("themeToggle"));
+
+// Show the shortcuts the user actually has, since they can be reassigned.
+chrome.commands.getAll(commands => {
+  for (const button of document.querySelectorAll("[data-command]")) {
+    const shortcut = commands.find(command => command.name === button.dataset.command)?.shortcut;
+    if (!shortcut) continue;
+    const kbd = document.createElement("kbd"); kbd.textContent = shortcut; button.append(kbd);
+  }
+});
+
 chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
   activeTabId = tabs[0]?.id || null;
   document.querySelectorAll(".actions button").forEach(button => button.disabled = !activeTabId);
@@ -12,7 +36,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
 chrome.runtime.sendMessage({ action: "GET_AI_SETTINGS_SUMMARY" }, summary => {
   if (chrome.runtime.lastError || !summary) return;
   document.getElementById("summary").textContent = `${summary.model} · кэш ${summary.caching ? "вкл." : "выкл."}`;
-  applyTheme(summary.theme || "dark");
+  document.getElementById("setup").classList.toggle("hidden", Boolean(summary.hasApiKey));
 });
 
 function openPanelFromGesture() {
@@ -33,27 +57,37 @@ async function finishPanelAction(opening, responsePromise, fallback) {
   window.close();
 }
 
+function relativeTime(timestamp) {
+  if (!Number(timestamp)) return "";
+  const minutes = Math.round((Date.now() - Number(timestamp || 0)) / 60000);
+  if (minutes < 1) return "только что";
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  return new Date(timestamp).toLocaleDateString("ru-RU");
+}
+
 function loadRecentChats() {
   chrome.runtime.sendMessage({ action: "GET_SAVED_AI_CHATS" }, result => {
     const list = document.getElementById("chats");
     const chats = result?.chats || [];
-    if (!chats.length) { list.innerHTML = '<span class="meta">Чатов пока нет</span>'; return; }
+    if (!chats.length) { list.innerHTML = '<div class="empty">Чатов пока нет</div>'; return; }
     list.innerHTML = "";
     const visibleChats = chats.slice(0, result.recentChatsLimit ?? 6);
-    if (!visibleChats.length) { list.innerHTML = '<span class="meta">Показ недавних чатов отключён</span>'; return; }
+    if (!visibleChats.length) { list.innerHTML = '<div class="empty">Показ недавних чатов отключён</div>'; return; }
     visibleChats.forEach(chat => {
       const row = document.createElement("div"); row.className = "chat-row";
-      const button = document.createElement("button");
-      button.className = "chat"; button.textContent = chat.title || "Чат";
-      button.title = `${chat.model || ""} · $${money(chat.totalCost)}`;
+      const button = document.createElement("button"); button.type = "button"; button.className = "chat";
+      const title = document.createElement("strong"); title.textContent = chat.title || "Чат";
+      const meta = document.createElement("small"); meta.textContent = [relativeTime(chat.updatedAt), chat.model, `$${money(chat.totalCost)}`].filter(Boolean).join(" · ");
+      button.append(title, meta);
       button.addEventListener("click", () => {
         statusNode.textContent = "";
         const opening = openPanelFromGesture();
         const loading = chrome.runtime.sendMessage({ action: "OPEN_SAVED_AI_CHAT", chatId: chat.id, targetTabId: activeTabId, openInSidePanel: true, panelAlreadyOpen: true });
         finishPanelAction(opening, loading, "Не удалось открыть чат.");
       });
-      const remove = document.createElement("button"); remove.className = "delete-chat"; remove.textContent = "×"; remove.title = "Удалить чат из истории"; remove.setAttribute("aria-label", `Удалить чат ${chat.title || "Чат"}`);
-      remove.addEventListener("click", async () => {
+      const remove = iconButton("trash", `Удалить чат «${chat.title || "Чат"}» из истории`, async () => {
         if (!confirm(`Удалить чат «${chat.title || "Чат"}» из истории?`)) return;
         const deleted = await chrome.runtime.sendMessage({ action: "DELETE_SAVED_AI_CHATS", chatIds: [chat.id] });
         if (!deleted?.ok) { statusNode.textContent = deleted?.error || "Не удалось удалить чат."; return; }
@@ -82,11 +116,5 @@ document.getElementById("openPanel").addEventListener("click", () => {
 });
 
 document.getElementById("options").addEventListener("click", () => chrome.runtime.openOptionsPage());
+document.getElementById("setupButton").addEventListener("click", () => chrome.runtime.openOptionsPage());
 document.getElementById("history").addEventListener("click", () => chrome.tabs.create({ url: chrome.runtime.getURL("history.html") }));
-document.getElementById("themeToggle").addEventListener("click", async () => {
-  const current = document.body.classList.contains("light") ? "light" : "dark";
-  const theme = current === "light" ? "dark" : "light";
-  await chrome.storage.sync.set({ theme }); applyTheme(theme);
-});
-function applyTheme(theme) { document.body.classList.toggle("light", theme === "light" || (theme === "system" && matchMedia("(prefers-color-scheme:light)").matches)); }
-function money(value) { const number = Number(value) || 0, absolute = Math.abs(number); if (!absolute || absolute >= .01) return number.toFixed(2); return number.toFixed(Math.min(8, Math.max(2, Math.ceil(-Math.log10(absolute)) + 1))); }

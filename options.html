@@ -4,48 +4,51 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Настройки · AI Text Tools</title>
+  <link rel="stylesheet" href="theme.css">
+  <script src="common.js"></script>
   <style>
-    :root { color-scheme: dark; --bg:#0d121b; --card:#151c28; --line:#2c3749; --text:#ebf0f8; --muted:#95a3b8; --accent:#7667ff; }
-    * { box-sizing: border-box; }
-    body { margin: 0; color: var(--text); background: radial-gradient(circle at 20% 0,#17213b 0,transparent 35%),var(--bg); font: 14px/1.55 Inter,ui-sans-serif,system-ui,sans-serif; }
-    .layout { display: grid; grid-template-columns: 230px minmax(0,900px); gap: 28px; max-width: 1200px; margin: auto; padding: 28px; }
-    aside { position: sticky; top: 24px; align-self: start; }
-    .brand { display:flex; align-items:center; gap:11px; margin-bottom:22px; } .brand img{width:38px;height:38px}.brand h1{margin:0;font-size:17px}.version{color:var(--muted);font-size:11px}
-    nav { display:grid; gap:4px; } nav a { padding:8px 10px; border-radius:8px; color:#b8c3d5; text-decoration:none; } nav a:hover{color:#fff;background:#1b2535}
-    main { min-width:0; } section { margin-bottom:20px; padding:22px; border:1px solid var(--line); border-radius:16px; background:rgba(21,28,40,.94); box-shadow:0 15px 40px rgba(0,0,0,.18); }
-    h2 { margin:0 0 5px; font-size:18px; } h3{margin:0;font-size:14px}.lead{margin:0 0 18px;color:var(--muted)}
-    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }.full{grid-column:1/-1}
-    label { display:block; color:#b7c2d4; font-size:12px; font-weight:650; }.help{display:block;margin-top:5px;color:#77859a;font-size:11px;font-weight:400}
-    input,textarea,select { width:100%; margin-top:6px; border:1px solid #354159; border-radius:9px; outline:0; color:var(--text); background:#0c121b; font:inherit; }
-    input,select{height:40px;padding:0 11px}textarea{min-height:100px;padding:10px 11px;resize:vertical;line-height:1.5;white-space:pre-wrap}
-    input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(118,103,255,.15)}
-    input[type=checkbox]{width:17px;height:17px;margin:0;accent-color:var(--accent)}.check{display:flex;align-items:flex-start;gap:9px;color:#c6d0df;font-size:13px}.check span{flex:1}
-    button,.button { display:inline-flex; align-items:center; justify-content:center; min-height:38px; padding:0 14px; border:1px solid #39465d; border-radius:9px; cursor:pointer; color:#dce4f1; background:#1b2534; font:inherit; text-decoration:none; }
-    button:hover,.button:hover{background:#27344a}.primary{border:0;color:#fff;background:linear-gradient(135deg,#765cff,#4b6eff);font-weight:700}.primary:hover{filter:brightness(1.08)}.danger{color:#ffcbd1;background:#3c2028}
+    body{font-size:14px;line-height:1.55}
+    .layout{display:grid;grid-template-columns:220px minmax(0,900px);gap:28px;max-width:1200px;margin:auto;padding:28px}
+    aside{position:sticky;top:24px;align-self:start}
+    .brand{display:flex;align-items:center;gap:11px;margin-bottom:22px}.brand img{width:38px;height:38px}.brand h1{margin:0;font-size:17px}.version{color:var(--text-3);font-size:11px}
+    nav{display:grid;gap:2px}nav a{padding:7px 10px;border-radius:8px;color:var(--text-2);text-decoration:none}nav a:hover{color:var(--text);background:var(--surface-2)}
+    .theme-row{display:flex;align-items:center;gap:8px;margin-top:18px;color:var(--text-3);font-size:12px}
+    main{min-width:0}section{margin-bottom:18px;padding:22px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-sm);scroll-margin-top:16px}
+    h2{margin:0 0 4px;font-size:17px}h3{margin:0;font-size:14px}.lead{margin:0 0 18px;color:var(--text-3)}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.full{grid-column:1/-1}
+    label{display:block;color:var(--text-2);font-size:12px;font-weight:650}.help{display:block;margin-top:5px;color:var(--text-3);font-size:11.5px;font-weight:400}
+    label input:not([type=checkbox]),label textarea,label select{width:100%;margin-top:6px}
+    input:not([type=checkbox]),select{height:38px;padding:0 11px}textarea{min-height:100px;padding:10px 11px;resize:vertical;line-height:1.5;white-space:pre-wrap}
+    input[type=checkbox]{width:17px;height:17px;margin:2px 0 0}.check{display:flex;align-items:flex-start;gap:9px;color:var(--text);font-size:13px;font-weight:400}.check span{flex:1}
+    button,.button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 14px;border:1px solid var(--border-strong);border-radius:var(--radius);cursor:pointer;color:var(--text-2);background:var(--surface-2);text-decoration:none}
+    button:hover:not(:disabled),.button:hover{color:var(--text);border-color:var(--accent-border);background:var(--surface-3)}button:disabled{opacity:.45;cursor:not-allowed}
+    .primary{border-color:transparent;color:var(--on-accent);background:var(--gradient);font-weight:650}.primary:hover:not(:disabled){color:var(--on-accent);border-color:transparent;background:var(--gradient);filter:brightness(1.08)}
+    .danger{color:var(--danger-text);border-color:color-mix(in srgb,var(--danger) 40%,transparent);background:var(--danger-soft)}.danger:hover:not(:disabled){color:#fff;border-color:var(--danger);background:var(--danger)}
     .toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.toolbar-actions{display:flex;gap:8px;flex-wrap:wrap}
-    .prompt-list{display:grid;gap:12px;margin-top:16px}.prompt-card{padding:15px;border:1px solid #303c51;border-radius:12px;background:#111824}.prompt-head{display:flex;align-items:center;gap:8px}.prompt-head input{margin:0;font-weight:700}.prompt-actions{display:flex;gap:5px}.prompt-actions button{min-width:35px;padding:0 9px}.prompt-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(180px,1fr);gap:12px;margin-top:10px}.prompt-grid textarea{min-height:112px;margin:0}.stack{display:grid;gap:8px}.stack input,.stack select{margin:0}
-    code { padding:2px 5px; border-radius:5px; color:#bfc6ff; background:#0b1018; }.tokens{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.info{padding:12px;border:1px solid #2f3b50;border-radius:10px;background:#111824}.info strong{display:block;margin-bottom:3px}.info span{color:var(--muted);font-size:12px}
-    #savebar{position:sticky;bottom:12px;z-index:2;display:flex;align-items:center;justify-content:space-between;margin-top:18px;padding:12px 14px;border:1px solid #3b4860;border-radius:12px;background:rgba(18,25,36,.94);backdrop-filter:blur(10px)}#status{color:#9cafc8;font-size:12px}#status.ok{color:#81d8a0}#status.error{color:#ff9eaa}.model-loader{display:flex;flex-direction:column;justify-content:flex-end;gap:6px}.model-loader button{width:100%;height:40px}
+    .prompt-list{display:grid;gap:12px;margin-top:16px}.prompt-card{padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)}.prompt-head{display:flex;align-items:center;gap:8px}.prompt-head input{margin:0;font-weight:650}.prompt-actions{display:flex;gap:4px}.prompt-actions button{min-width:34px;padding:0 9px}.prompt-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(180px,1fr);gap:12px;margin-top:10px}.prompt-grid textarea{min-height:112px;margin:0}.stack{display:grid;gap:8px}.stack input,.stack select{margin:0}
+    code{padding:2px 6px;border-radius:5px;color:var(--inline-code-text);background:var(--inline-code-bg);font:12px var(--mono)}.tokens{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.info{padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}.info strong{display:block;margin-bottom:3px}.info span{color:var(--text-3);font-size:12px}
+    #savebar{position:sticky;bottom:12px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding:10px 12px 10px 16px;border:1px solid var(--border-strong);border-radius:12px;background:color-mix(in srgb,var(--surface) 92%,transparent);box-shadow:var(--shadow);backdrop-filter:blur(10px)}#status{color:var(--text-3);font-size:12px}#status.ok{color:var(--success)}#status.error{color:var(--danger-text)}#status.dirty{color:var(--warning-text)}
+    .model-loader{display:flex;flex-direction:column;justify-content:flex-end;gap:6px}.model-loader button{width:100%;height:38px}
     @media(max-width:800px){.layout{display:block;padding:15px}aside{position:static;margin-bottom:20px}nav{display:flex;overflow:auto}.grid,.prompt-grid,.info-grid{grid-template-columns:1fr}section{padding:16px}}
   </style>
 </head>
 <body>
   <div class="layout">
-    <aside><div class="brand"><img src="icon48.png" alt=""><div><h1>AI Text Tools</h1><div class="version">Версия 6.7.2 · Manifest V3</div></div></div><nav>
+    <aside><div class="brand"><img src="icon48.png" alt=""><div><h1>AI Text Tools</h1><div class="version" id="version">Manifest V3</div></div></div><nav>
       <a href="#connection">Подключение</a><a href="#behavior">Модели и поведение</a><a href="#prompts">Промпты</a><a href="#page">Страница и кэш</a><a href="#about">Возможности</a><a href="history.html" target="_blank">История ↗</a>
     </nav></aside>
     <main>
       <section id="connection"><h2>Подключение API</h2><p class="lead">OpenRouter с расширенной интеграцией или другой совместимый с OpenAI Chat Completions API.</p><div class="grid">
         <label>Провайдер<select id="apiProvider"><option value="openrouter">OpenRouter</option><option value="custom">Другой OpenAI-совместимый API</option></select></label>
         <label>Адрес API<input id="apiServer" type="url" placeholder="https://openrouter.ai/api/v1"></label>
-        <label>API-ключ<input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-…"></label>
+        <label>API-ключ<input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-…"><span class="help">Хранится только в этом браузере и не синхронизируется с Google-аккаунтом.</span></label>
         <div class="model-loader"><span class="help" id="modelsStatus">Каталог моделей ещё не загружен.</span><button id="loadModels" type="button">Обновить модели и цены</button></div>
       </div></section>
 
       <section id="behavior"><h2>Модели и поведение</h2><p class="lead">Отдельные значения для готовых промптов и свободного вопроса без контекста.</p><div class="grid">
-        <label>Модель промптов по умолчанию<input id="defaultPromptModel" list="recentModels" placeholder="openrouter/auto"><span class="help" id="defaultModelInfo">Используется готовыми пунктами меню без собственной модели.</span></label>
+        <label>Модель промптов по умолчанию<input id="defaultPromptModel" placeholder="openrouter/auto"><span class="help" id="defaultModelInfo">Используется готовыми пунктами меню без собственной модели.</span></label>
         <label>Reasoning промптов по умолчанию<select id="defaultThinking"></select></label>
-        <label>Модель свободного запроса<input id="quickModel" list="recentModels" placeholder="openrouter/auto"><span class="help" id="quickModelInfo">Для основного окна, страницы и продолжения диалога.</span></label>
+        <label>Модель свободного запроса<input id="quickModel" placeholder="openrouter/auto"><span class="help" id="quickModelInfo">Для основного окна, страницы и продолжения диалога.</span></label>
         <label>Reasoning свободного запроса<select id="quickThinking"></select></label>
         <label>Custom budget промптов<input id="defaultReasoningMaxTokens" type="number" min="1" max="128000" step="100"><span class="help">Максимум токенов на рассуждение для готовых промптов. Используется только при Reasoning → Custom; большее значение может увеличить время и стоимость запроса.</span></label>
         <label>Custom budget свободного запроса<input id="quickReasoningMaxTokens" type="number" min="1" max="128000" step="100"><span class="help">Максимум токенов на рассуждение для обычных вопросов, страницы и чата. Для Нет/Low/Medium/High это поле игнорируется.</span></label>
@@ -62,7 +65,7 @@
         <label class="check full"><input id="enableCaching" type="checkbox"><span><strong>Использовать кэш OpenRouter</strong><span class="help">Добавляет стабильный session_id для sticky routing и включает response cache для полностью одинаковых запросов. Продолжение чата сохраняет прежние сообщения, что позволяет совместимым моделям переиспользовать prompt cache.</span></span></label>
         <label>TTL response cache, секунд<input id="cacheTtl" type="number" min="1" max="86400"><span class="help">По умолчанию 300 секунд. Влияет только на OpenRouter.</span></label>
         <label>Отправка сообщения<select id="sendOnEnter"><option value="true">Enter отправляет, Shift+Enter — новая строка</option><option value="false">Ctrl+Enter отправляет, Enter — новая строка</option></select></label>
-        <label>Тема<select id="theme"><option value="dark">Тёмная</option><option value="light">Светлая</option><option value="system">Как в системе</option></select></label>
+        <label>Тема<select id="theme"><option value="system">Как в системе</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select><span class="help">Применяется ко всем окнам расширения сразу.</span></label>
         <label class="full">Поведение чата при переключении вкладок<select id="sidePanelTabBehavior"><option value="keep-current">Продолжать текущий чат на всех вкладках</option><option value="per-tab">Отдельный чат для каждой вкладки</option></select><span class="help">В первом режиме отправленный чат остаётся в панели при переходе на другие вкладки. Во втором панель показывает чат, привязанный к выбранной вкладке. Новый ещё не отправленный запрос всегда обновляет контекст активной вкладки.</span></label>
         <label>Ширина отдельного окна, px<input id="chatWindowWidth" type="number" min="420" max="1800" step="10"><span class="help">Начальная ширина при обычной ширине браузера.</span></label>
         <label>Ширина окна при узком браузере, px<input id="chatWindowCompactWidth" type="number" min="420" max="1200" step="10"><span class="help">Используется, когда основное окно браузера уже 900 px.</span></label>

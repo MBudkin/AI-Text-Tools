@@ -20,7 +20,7 @@ const DEFAULTS = {
   historyLimit: 50,
   recentChatsLimit: 6,
   sendOnEnter: true,
-  theme: "dark",
+  theme: "system",
   menuItems: []
 };
 
@@ -30,11 +30,20 @@ let modelCatalog = [];
 const ids = ["apiProvider", "apiServer", "apiKey", "defaultPromptModel", "quickModel", "systemPrompt", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme"];
 const byId = id => document.getElementById(id);
 
+const IMPORTABLE_KEYS = new Set([...ids, "apiModel", "menuItems", "recentModels"]);
+
 document.addEventListener("DOMContentLoaded", loadSettings);
 
+const pickerModels = () => modelCatalog.length ? modelCatalog : recentModels.map(id => ({ id, name: id }));
+attachModelPicker(byId("defaultPromptModel"), pickerModels);
+attachModelPicker(byId("quickModel"), pickerModels);
+// Preview immediately; the choice is stored with the other settings on save.
+byId("theme").addEventListener("change", () => applyThemePreference(byId("theme").value));
+
 async function loadSettings() {
-  const stored = await chrome.storage.sync.get(null);
-  const settings = { ...DEFAULTS, ...stored };
+  byId("version").textContent = `Версия ${chrome.runtime.getManifest().version} · Manifest V3`;
+  const [stored, secrets] = await Promise.all([chrome.storage.sync.get(null), chrome.storage.local.get("apiKey")]);
+  const settings = { ...DEFAULTS, ...stored, apiKey: secrets.apiKey || stored.apiKey || "" };
   settings.defaultThinking = migrateReasoning(settings.defaultThinking);
   settings.quickThinking = migrateReasoning(settings.quickThinking);
   setReasoningOptions(byId("defaultThinking"), null, settings.defaultThinking);
@@ -93,18 +102,6 @@ function updateModelCapability(inputId, thinkingId, infoId) {
   byId(infoId).textContent = `${model.name || model.id} · ${input} · ${mandatory ? "reasoning обязателен" : supported ? "reasoning доступен" : "без reasoning"}`;
 }
 
-function migrateReasoning(value) { return value === "on" ? "medium" : value === "off" || !value ? "none" : value; }
-function setReasoningOptions(select, model, current = "none") {
-  const mandatory = Boolean(model?.reasoning?.mandatory);
-  const supported = !model || mandatory || model.supported_parameters?.includes("reasoning") || Boolean(model.reasoning);
-  let efforts = Array.isArray(model?.reasoning?.supported_efforts) && model.reasoning.supported_efforts.length ? model.reasoning.supported_efforts : ["low", "medium", "high"];
-  if (!supported) efforts = [];
-  const values = [...(!mandatory ? ["none"] : []), ...efforts, ...(supported && model?.reasoning?.supports_max_tokens !== false ? ["custom"] : [])];
-  const labels = { none: "Нет", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max", custom: "Custom" };
-  select.innerHTML = [...new Set(values)].map(value => `<option value="${value}">${labels[value] || value}</option>`).join("");
-  const migrated = migrateReasoning(current);
-  select.value = values.includes(migrated) ? migrated : (model?.reasoning?.default_effort && values.includes(model.reasoning.default_effort) ? model.reasoning.default_effort : values[0] || "none");
-}
 
 byId("apiProvider").addEventListener("change", updateProviderUI);
 byId("defaultPromptModel").addEventListener("change", updateModelCapabilities);
@@ -127,10 +124,11 @@ function renderPrompts() {
     const card = document.createElement("article");
     card.className = "prompt-card";
     card.innerHTML = `<div class="prompt-head"><input class="title" type="text" aria-label="Название" placeholder="Название пункта" value="${escapeAttribute(item.title || "")}"><div class="prompt-actions"><button type="button" data-up title="Выше" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-down title="Ниже" ${index === menuItems.length - 1 ? "disabled" : ""}>↓</button><button type="button" class="danger" data-delete title="Удалить">×</button></div></div>
-      <div class="prompt-grid"><textarea class="prompt" aria-label="Текст промпта" placeholder="Инструкция модели">${escapeHtml(item.prompt || "")}</textarea><div class="stack"><input class="model" type="text" list="recentModels" placeholder="Модель по умолчанию" value="${escapeAttribute(item.model || "")}"><select class="thinking"></select><input class="reasoning-budget" type="number" min="1" max="128000" step="100" value="${Number(item.reasoningMaxTokens) || 2000}" title="Custom reasoning budget"><span class="help">Пустая модель использует модель промптов по умолчанию.</span></div></div>`;
+      <div class="prompt-grid"><textarea class="prompt" aria-label="Текст промпта" placeholder="Инструкция модели">${escapeHtml(item.prompt || "")}</textarea><div class="stack"><input class="model" type="text" placeholder="Модель по умолчанию" value="${escapeAttribute(item.model || "")}"><select class="thinking"></select><input class="reasoning-budget" type="number" min="1" max="128000" step="100" value="${Number(item.reasoningMaxTokens) || 2000}" title="Custom reasoning budget"><span class="help">Пустая модель использует модель промптов по умолчанию.</span></div></div>`;
     card.querySelector(".title").addEventListener("input", event => item.title = event.target.value);
     card.querySelector(".prompt").addEventListener("input", event => item.prompt = event.target.value);
     const modelInput = card.querySelector(".model");
+    attachModelPicker(modelInput, pickerModels);
     const thinkingSelect = card.querySelector(".thinking");
     setReasoningOptions(thinkingSelect, null, item.thinking === "default" ? "none" : item.thinking);
     const defaultOption = document.createElement("option"); defaultOption.value = "default"; defaultOption.textContent = "По умолчанию"; thinkingSelect.prepend(defaultOption); thinkingSelect.value = item.thinking || "default";
@@ -201,7 +199,7 @@ function collectSettings() {
 byId("saveSettings").addEventListener("click", async () => {
   try {
     const settings = collectSettings();
-    await chrome.storage.sync.set(settings);
+    await writeSettings(settings);
     recentModels = settings.recentModels; renderRecentModels();
     await chrome.runtime.sendMessage({ action: "UPDATE_AI_CONTEXT_MENUS" });
     setStatus("Настройки сохранены.", "ok");
@@ -211,6 +209,7 @@ byId("saveSettings").addEventListener("click", async () => {
 byId("exportSettings").addEventListener("click", async () => {
   try {
     const settings = collectSettings();
+    if (settings.apiKey && !confirm("Включить API-ключ в файл экспорта?\n\nФайл будет содержать ключ в открытом виде. Нажмите «Отмена», чтобы экспортировать настройки без ключа.")) delete settings.apiKey;
     const url = URL.createObjectURL(new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" }));
     const link = Object.assign(document.createElement("a"), { href: url, download: "ai-text-tools-settings.json" });
     link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -222,14 +221,25 @@ byId("importSettings").addEventListener("change", async event => {
     const file = event.target.files?.[0]; if (!file) return;
     const imported = JSON.parse(await file.text());
     if (!imported || typeof imported !== "object" || !Array.isArray(imported.menuItems)) throw new Error("Некорректный файл настроек.");
-    await chrome.storage.sync.set(imported);
+    if (imported.menuItems.some(item => !item || typeof item.title !== "string" || typeof item.prompt !== "string")) throw new Error("Некорректный список промптов.");
+    const accepted = Object.fromEntries(Object.entries(imported).filter(([key]) => IMPORTABLE_KEYS.has(key)));
+    if (!accepted.apiKey) delete accepted.apiKey;
+    await writeSettings(accepted);
     await chrome.runtime.sendMessage({ action: "UPDATE_AI_CONTEXT_MENUS" });
     await loadSettings(); setStatus("Настройки импортированы.", "ok");
   } catch (error) { setStatus(`Ошибка импорта: ${error.message}`, "error"); }
   event.target.value = "";
 });
 
-function markChanged() { setStatus("Есть несохранённые изменения.", ""); }
+// The API key stays in local storage: storage.sync would copy it to every
+// browser signed in to the same Google account.
+async function writeSettings(settings) {
+  const { apiKey, ...syncSettings } = settings;
+  await chrome.storage.sync.set(syncSettings);
+  if (typeof apiKey === "string") await chrome.storage.local.set({ apiKey });
+  await chrome.storage.sync.remove("apiKey");
+}
+
+function markChanged() { setStatus("Есть несохранённые изменения.", "dirty"); }
 function setStatus(message, type) { const node = byId("status"); node.textContent = message; node.className = type; }
-function escapeHtml(value) { return String(value).replace(/[&<>]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char]); }
-function escapeAttribute(value) { return escapeHtml(value).replace(/"/g, "&quot;"); }
+function escapeAttribute(value) { return escapeHtml(value); }

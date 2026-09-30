@@ -26,18 +26,21 @@ const DEFAULTS = {
   historyLimit: 50,
   recentChatsLimit: 6,
   sendOnEnter: true,
-  theme: "dark",
+  theme: "system",
   menuItems: DEFAULT_MENU_ITEMS
 };
 
 const sessions = new Map();
 const activeRequests = new Map();
 const drafts = new Map();
-const activeSurfaces = new Map();
 const temporaryWindows = new Map();
 
 const storageGet = (area, keys) => new Promise(resolve => chrome.storage[area].get(keys, resolve));
-const storageSet = (area, value) => new Promise(resolve => chrome.storage[area].set(value, resolve));
+const storageSet = (area, value) => new Promise((resolve, reject) => chrome.storage[area].set(value, () => {
+  const error = chrome.runtime.lastError;
+  if (error) reject(new Error(error.message || String(error))); else resolve();
+}));
+const storageRemove = (area, keys) => new Promise(resolve => chrome.storage[area].remove(keys, resolve));
 
 function isOpenRouter(server = "") {
   try {
@@ -48,11 +51,13 @@ function isOpenRouter(server = "") {
 }
 
 async function getSettings() {
-  const stored = await storageGet("sync", null);
+  const [stored, secrets] = await Promise.all([storageGet("sync", null), storageGet("local", ["apiKey"])]);
   const legacyModel = stored.apiModel || DEFAULTS.apiModel;
   return {
     ...DEFAULTS,
     ...stored,
+    // The key lives in local storage so it is not synced to the Google account.
+    apiKey: secrets.apiKey || stored.apiKey || "",
     apiModel: legacyModel,
     defaultPromptModel: stored.defaultPromptModel || legacyModel,
     quickModel: stored.quickModel || legacyModel,
@@ -139,6 +144,11 @@ async function initializeExtension() {
     if (typeof stored[key] === "undefined") migration[key] = DEFAULTS[key];
   }
   if (Object.keys(migration).length) await storageSet("sync", migration);
+  if (stored.apiKey) {
+    const { apiKey: localKey } = await storageGet("local", ["apiKey"]);
+    if (!localKey) await storageSet("local", { apiKey: stored.apiKey });
+    await storageRemove("sync", "apiKey");
+  }
   createContextMenus((stored.menuItems && stored.menuItems.length ? stored.menuItems : DEFAULT_MENU_ITEMS));
 }
 
@@ -151,8 +161,7 @@ async function ensureContentScript(tabId) {
     return true;
   } catch {
     try {
-      await chrome.scripting.insertCSS({ target: { tabId }, files: ["content.css"] });
-      await chrome.scripting.executeScript({ target: { tabId }, files: ["marked.min.js", "content.js"] });
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
       return true;
     } catch (error) {
       console.warn("AI Text Tools cannot run on this page:", error);
@@ -175,25 +184,38 @@ async function sendToTab(tabId, message) {
   }
 }
 
+// Chat UI lives only in extension pages (side panel / chat window), so events
+// go over runtime messaging; pages never receive the per-token stream.
 async function emitChatEvent(tabId, message) {
-  const event = { ...message, sourceTabId: tabId, surfaceOwner: activeSurfaces.get(tabId) || "page" };
-  await Promise.allSettled([
-    sendToTab(tabId, event),
-    chrome.runtime.sendMessage(event)
-  ]);
+  try { await chrome.runtime.sendMessage({ ...message, sourceTabId: tabId }); } catch {}
 }
 
-async function readPageContext(tabId, limit, includeLinks = false) {
-  if (!(await ensureContentScript(tabId))) throw new Error("На этой странице расширения браузера не могут показывать интерфейс.");
-  const linkLimit = Math.min(16000, Math.max(2000, Math.floor(Number(limit || DEFAULTS.pageContextLimit) * .25)));
-  let context = await sendToTab(tabId, { action: "GET_AI_PAGE_CONTEXT", limit: Number.MAX_SAFE_INTEGER, includeLinks, linkLimit });
+function pageLinkLimit(limit) {
+  return Math.min(16000, Math.max(2000, Math.floor(Number(limit || DEFAULTS.pageContextLimit) * .25)));
+}
+
+async function collectPageContext(tabId, includeLinks = false, limit = DEFAULTS.pageContextLimit) {
+  if (!(await ensureContentScript(tabId))) throw new Error("Содержимое этой страницы недоступно расширению (служебная страница браузера или магазин расширений).");
+  const linkLimit = pageLinkLimit(limit);
+  const context = await sendToTab(tabId, { action: "GET_AI_PAGE_CONTEXT", limit: Number.MAX_SAFE_INTEGER, includeLinks, linkLimit });
   if (!context) throw new Error("Не удалось прочитать содержимое страницы.");
-  context = await augmentWithFrameText(tabId, context, includeLinks, linkLimit);
-  if (context.pageText.length > limit) {
-    const confirmation = await sendToTab(tabId, { action: "CONFIRM_AI_PAGE_OVERFLOW", actual: context.pageText.length, limit });
-    if (!confirmation?.proceed) throw new Error("Отправка полного текста страницы отменена пользователем.");
+  return augmentWithFrameText(tabId, context, includeLinks, linkLimit);
+}
+
+// overflow: "truncate" (default) cuts the text to the configured limit,
+// "full" sends everything — the side panel asks the user before choosing it.
+async function readPageContext(tabId, limit, includeLinks = false, overflow = "truncate") {
+  const context = await collectPageContext(tabId, includeLinks, limit);
+  const originalLength = context.pageText.length;
+  if (overflow !== "full" && originalLength > limit) {
+    context.pageText = `${context.pageText.slice(0, limit)}\n\n[Текст страницы обрезан расширением: ${limit} из ${originalLength} символов]`;
+    context.truncatedFrom = originalLength;
   }
   return context;
+}
+
+function truncationNotice(context, limit) {
+  return context?.truncatedFrom ? `Текст страницы обрезан до ${Number(limit).toLocaleString("ru-RU")} из ${context.truncatedFrom.toLocaleString("ru-RU")} символов. Лимит меняется в настройках.` : "";
 }
 
 function mergePageLinks(linkGroups, maxLinks = 120, maxChars = 16000) {
@@ -216,13 +238,10 @@ function mergePageLinks(linkGroups, maxLinks = 120, maxChars = 16000) {
 async function augmentWithFrameText(tabId, context, includeLinks = false, linkLimit = 16000) {
   try {
     const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, args: [includeLinks, linkLimit], func: (collectLinks, maxLinkChars) => {
-      const extensionHost = document.getElementById("ai-text-tools-host");
-      const previousDisplay = extensionHost?.style.display;
-      if (extensionHost) extensionHost.style.display = "none";
       const links = [];
       let usedChars = 0;
       if (collectLinks) for (const anchor of document.querySelectorAll("a[href]")) {
-        if (anchor.closest("#ai-text-tools-host,[hidden],[aria-hidden='true']")) continue;
+        if (anchor.closest("[hidden],[aria-hidden='true']")) continue;
         const style = getComputedStyle(anchor);
         if (style.display === "none" || style.visibility === "hidden") continue;
         const text = (anchor.innerText || anchor.getAttribute("aria-label") || anchor.title || anchor.querySelector("img[alt]")?.alt || "").replace(/\s+/g, " ").trim().slice(0, 180);
@@ -235,9 +254,7 @@ async function augmentWithFrameText(tabId, context, includeLinks = false, linkLi
           links.push({ text, url: url.href }); usedChars += size;
         } catch {}
       }
-      const result = { text: document.body?.innerText || document.documentElement?.innerText || "", title: document.title, url: location.href, links };
-      if (extensionHost) extensionHost.style.display = previousDisplay || "";
-      return result;
+      return { text: document.body?.innerText || document.documentElement?.innerText || "", title: document.title, url: location.href, links };
     } });
     let combined = context.pageText || "";
     for (const result of results || []) {
@@ -257,14 +274,17 @@ async function augmentWithFrameText(tabId, context, includeLinks = false, linkLi
 async function openComposer(tab, mode = "auto", openPanel = true) {
   if (!tab?.id || !chrome.sidePanel) return { ok: false, error: "Боковая панель недоступна в этой версии браузера." };
   const openingPanel = openPanel ? chrome.sidePanel.open({ tabId: tab.id }).then(() => null, error => error) : Promise.resolve(null);
-  if (!(await ensureContentScript(tab.id))) return { ok: false, error: "Содержимое этой служебной страницы недоступно расширению." };
+  // Service pages (chrome://, Web Store) cannot be scripted, but a plain chat
+  // without page context still works there.
+  const scriptable = await ensureContentScript(tab.id);
   await stopGeneration(tab.id, true);
   sessions.delete(tab.id);
   drafts.delete(tab.id);
   if (chrome.storage.session) await chrome.storage.session.remove(`chat_${tab.id}`);
   const settings = await getSettings();
-  const selection = await sendToTab(tab.id, { action: "GET_AI_SELECTION" });
+  const selection = scriptable ? await sendToTab(tab.id, { action: "GET_AI_SELECTION" }) : null;
   const selectionText = selection?.selectionText || "";
+  if (!scriptable && mode === "page") mode = "none";
   drafts.set(tab.id, {
     prompt: "",
     mode: mode === "auto" ? (selectionText ? "selection" : "none") : mode,
@@ -275,7 +295,6 @@ async function openComposer(tab, mode = "auto", openPanel = true) {
     images: [],
     temporary: false
   });
-  activeSurfaces.set(tab.id, "sidepanel");
   chrome.runtime.sendMessage({ action: "AI_SURFACE_OWNER", sourceTabId: tab.id, surfaceOwner: "sidepanel", newChat: true }).catch(() => {});
   const openingError = await openingPanel;
   if (openingError) return { ok: false, error: openingError.message || "Не удалось открыть боковую панель." };
@@ -324,13 +343,18 @@ function apiMessages(messages) {
 
 async function persistSession(tabId, session) {
   if (!chrome.storage.session) return;
-  await storageSet("session", {
-    [`chat_${tabId}`]: {
-      ...session,
-      messages: compactMessages(session.messages),
-      updatedAt: Date.now()
-    }
-  });
+  const key = `chat_${tabId}`;
+  const snapshot = { ...session, messages: compactMessages(session.messages), updatedAt: Date.now() };
+  try {
+    await storageSet("session", { [key]: snapshot });
+  } catch (error) {
+    // storage.session is capped (~10 MB): retry without the bulky parts that
+    // are only needed for display, so the conversation itself survives a worker restart.
+    const { pageText, pageLinks, ...context } = snapshot.context || {};
+    const slim = { ...snapshot, context, messages: snapshot.messages.map(({ imagePreviews, ...message }) => message) };
+    try { await storageSet("session", { [key]: slim }); }
+    catch (retryError) { console.warn("AI Text Tools cannot persist the session", error, retryError); }
+  }
 }
 
 async function loadSession(tabId) {
@@ -349,7 +373,6 @@ async function forgetTemporaryChat(tabId) {
   await stopGeneration(tabId, true);
   sessions.delete(tabId);
   drafts.delete(tabId);
-  activeSurfaces.delete(tabId);
   if (chrome.storage.session) await chrome.storage.session.remove(`chat_${tabId}`);
   return true;
 }
@@ -374,9 +397,12 @@ function buildUserContent(prompt, context, images = []) {
 
 async function startNewConversation(tabId, payload) {
   const settings = await getSettings();
-  activeSurfaces.set(tabId, payload.source === "sidepanel" ? "sidepanel" : "page");
   let context = payload.context || { type: "none" };
-  if (context.type === "page" && !context.pageText) context = { type: "page", ...(await readPageContext(tabId, settings.pageContextLimit, Boolean(context.includeLinks))) };
+  if (context.type === "page" && !context.pageText) {
+    context = { type: "page", ...(await readPageContext(tabId, settings.pageContextLimit, Boolean(context.includeLinks), context.overflow)) };
+    const notice = truncationNotice(context, settings.pageContextLimit);
+    if (notice) await emitChatEvent(tabId, { action: "AI_CHAT_META", notice });
+  }
   const templateContext = payload.contextForHistory || context;
   const placeholderContext = {
     selectionText: templateContext.selectionText,
@@ -587,7 +613,20 @@ async function generate(tabId, session, settings, historyQuery, generationOption
   session.partialReasoning = "";
   let reasoningDetails = [];
   let usage = null;
+  let completed = false;
   const imageUrls = [];
+  // Tokens arrive far faster than the panel can use them; coalescing them
+  // into ~40 ms batches saves an IPC round trip per token.
+  const pendingDelta = { content: "", reasoning: "", images: [] };
+  let lastFlush = 0;
+  const flushDelta = async (force = false) => {
+    if (!pendingDelta.content && !pendingDelta.reasoning && !pendingDelta.images.length) return;
+    if (!force && Date.now() - lastFlush < 40) return;
+    const batch = { action: "AI_CHAT_DELTA", content: pendingDelta.content, reasoning: pendingDelta.reasoning, images: pendingDelta.images.splice(0) };
+    pendingDelta.content = ""; pendingDelta.reasoning = "";
+    lastFlush = Date.now();
+    await emitChatEvent(tabId, batch);
+  };
   try {
     const endpoint = `${settings.apiServer.replace(/\/$/, "")}/chat/completions`;
     let response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal });
@@ -607,6 +646,34 @@ async function generate(tabId, session, settings, historyQuery, generationOption
     }
     await emitChatEvent(tabId, { action: "AI_CHAT_META", cacheStatus });
 
+    const handleLine = async line => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) return;
+      const data = trimmed.slice(5).trim();
+      if (!data || data === "[DONE]") return;
+      let event;
+      try { event = JSON.parse(data); } catch { return; }
+      if (event.error) throw new Error(event.error.message || JSON.stringify(event.error));
+      if (event.usage) usage = event.usage;
+      const delta = event.choices?.[0]?.delta || {};
+      const contentDelta = typeof delta.content === "string"
+        ? delta.content
+        : Array.isArray(delta.content)
+          ? delta.content.map(part => part?.text || "").join("")
+          : "";
+      const reasoningDelta = reasoningTextFromDelta(delta);
+      const newImages = imagesFromDelta(delta);
+      answer += contentDelta;
+      reasoning += reasoningDelta;
+      session.partialAnswer = answer;
+      session.partialReasoning = reasoning;
+      if (Array.isArray(delta.reasoning_details)) reasoningDetails.push(...delta.reasoning_details);
+      imageUrls.push(...newImages);
+      pendingDelta.content += contentDelta;
+      pendingDelta.reasoning += reasoningDelta;
+      pendingDelta.images.push(...newImages);
+    };
+
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -616,50 +683,38 @@ async function generate(tabId, session, settings, historyQuery, generationOption
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-        let event;
-        try { event = JSON.parse(data); } catch { continue; }
-        if (event.error) throw new Error(event.error.message || JSON.stringify(event.error));
-        if (event.usage) usage = event.usage;
-        const delta = event.choices?.[0]?.delta || {};
-        const contentDelta = typeof delta.content === "string"
-          ? delta.content
-          : Array.isArray(delta.content)
-            ? delta.content.map(part => part?.text || "").join("")
-            : "";
-        const reasoningDelta = reasoningTextFromDelta(delta);
-        const newImages = imagesFromDelta(delta);
-        answer += contentDelta;
-        reasoning += reasoningDelta;
-        session.partialAnswer = answer;
-        session.partialReasoning = reasoning;
-        if (Array.isArray(delta.reasoning_details)) reasoningDetails.push(...delta.reasoning_details);
-        imageUrls.push(...newImages);
-        if (contentDelta || reasoningDelta || newImages.length) {
-          await emitChatEvent(tabId, { action: "AI_CHAT_DELTA", content: contentDelta, reasoning: reasoningDelta, images: newImages });
-        }
-      }
+      for (const line of lines) await handleLine(line);
+      await flushDelta();
     }
+    // A stream may end without a trailing newline; its last event often carries usage.
+    buffer += decoder.decode();
+    for (const line of buffer.split(/\r?\n/)) await handleLine(line);
+    await flushDelta(true);
 
     const requestCost = Number(usage?.cost) || 0;
     const assistantMessage = { role: "assistant", content: answer || (imageUrls.length ? "Изображение создано." : ""), reasoning, usage, cost: requestCost, model: session.model, modelChanged: Boolean(generationOptions.modelChanged) };
     if (reasoningDetails.length) assistantMessage.reasoning_details = reasoningDetails;
     session.messages.push(assistantMessage);
+    completed = true;
     delete session.partialAnswer;
     delete session.partialReasoning;
     session.updatedAt = Date.now();
     session.totalCost = (Number(session.totalCost) || 0) + requestCost;
     await persistSession(tabId, session);
-    await saveChat(session);
-    await updateRecentModels(session.model);
+    const historyError = await saveChat(session).then(() => null, error => error);
+    await updateRecentModels(session.model).catch(() => {});
+    if (historyError) await emitChatEvent(tabId, { action: "AI_CHAT_META", notice: `Не удалось сохранить чат в историю: ${historyError.message}` });
     await emitChatEvent(tabId, { action: "AI_CHAT_DONE", content: assistantMessage.content, reasoning, usage, images: imageUrls, requestCost, totalCost: session.totalCost, cacheReadTokens: usage?.prompt_tokens_details?.cached_tokens || 0, model: session.model, modelChanged: Boolean(generationOptions.modelChanged) });
   } catch (error) {
+    const ownsSession = activeRequests.get(tabId) === controller;
+    if (ownsSession) await flushDelta(true);
+    const interrupted = error.name === "AbortError" ? "stopped" : "error";
+    // Keep what was already streamed: the user saw it, and the next turn or
+    // regeneration must see the same history. Superseded or reset requests
+    // (no longer owning the tab) are discarded.
+    if (ownsSession && !completed && (answer || reasoning)) await savePartialAnswer(tabId, session, { answer, reasoning, reasoningDetails, interrupted, modelChanged: generationOptions.modelChanged });
     if (error.name === "AbortError") {
-      if (activeRequests.get(tabId) === controller) await emitChatEvent(tabId, { action: "AI_CHAT_STOPPED" });
+      if (ownsSession) await emitChatEvent(tabId, { action: "AI_CHAT_STOPPED" });
     } else {
       console.error("AI request failed", error);
       await emitChatEvent(tabId, { action: "AI_CHAT_ERROR", error: error.message || String(error) });
@@ -667,6 +722,17 @@ async function generate(tabId, session, settings, historyQuery, generationOption
   } finally {
     if (activeRequests.get(tabId) === controller) activeRequests.delete(tabId);
   }
+}
+
+async function savePartialAnswer(tabId, session, { answer, reasoning, reasoningDetails, interrupted, modelChanged }) {
+  const message = { role: "assistant", content: answer, reasoning, cost: 0, model: session.model, modelChanged: Boolean(modelChanged), interrupted };
+  if (reasoningDetails.length) message.reasoning_details = reasoningDetails;
+  session.messages.push(message);
+  delete session.partialAnswer;
+  delete session.partialReasoning;
+  session.updatedAt = Date.now();
+  await persistSession(tabId, session);
+  await saveChat(session).catch(error => console.warn("AI Text Tools cannot save the interrupted chat", error));
 }
 
 async function rememberMandatoryReasoning(modelId) {
@@ -716,6 +782,8 @@ async function deleteSavedChats(chatIds = []) {
 async function updateRecentModels(model) {
   if (!model) return;
   const { recentModels = [] } = await storageGet("sync", ["recentModels"]);
+  // storage.sync has a tight write quota; skip the no-op rewrite after every answer.
+  if (recentModels[0] === model) return;
   await storageSet("sync", { recentModels: [model, ...recentModels.filter(item => item !== model)].slice(0, 12) });
 }
 
@@ -727,19 +795,57 @@ async function stopGeneration(tabId, silent = false) {
 
 async function summarizePage(tab, openPanel = true) {
   const openingPanel = openPanel && chrome.sidePanel ? chrome.sidePanel.open({ tabId: tab.id }).then(() => null, error => error) : Promise.resolve(null);
+  try {
+    const settings = await getSettings();
+    const openingError = await openingPanel;
+    if (openingError) throw openingError;
+    if (activeRequests.has(tab.id)) await emitChatEvent(tab.id, { action: "AI_CHAT_STOPPED" });
+    await startNewConversation(tab.id, {
+      prompt: settings.pageSummaryPrompt,
+      model: settings.quickModel,
+      thinking: settings.quickThinking,
+      context: { type: "page" },
+      source: "sidepanel",
+      announceSurface: true
+    });
+  } catch (error) {
+    await emitChatEvent(tab.id, { action: "AI_CHAT_ERROR", error: error.message || String(error) });
+  }
+}
+
+// Shared by the context menu and the quick-prompt chips of the side panel.
+async function runPromptTemplate(tab, index, selectionText = "", { openPanel = true, temporary = false } = {}) {
+  if (openPanel && chrome.sidePanel) await chrome.sidePanel.open({ tabId: tab.id });
   const settings = await getSettings();
-  const context = await readPageContext(tab.id, settings.pageContextLimit);
-  const surface = "sidepanel";
-  activeSurfaces.set(tab.id, surface);
-  const openingError = await openingPanel;
-  if (openingError) throw openingError;
-  if (activeRequests.has(tab.id)) await emitChatEvent(tab.id, { action: "AI_CHAT_STOPPED" });
+  const item = settings.menuItems[index];
+  if (!item) throw new Error("Промпт не найден. Обновите список в настройках.");
+  if (item.prompt.includes("{{selectionText}}") && !selectionText) throw new Error(`Для промпта «${item.title}» нужно выделить текст на странице.`);
+  let page = {};
+  if (/\{\{page(Text|Title|Url)\}\}/.test(item.prompt)) {
+    page = await readPageContext(tab.id, settings.pageContextLimit);
+    const notice = truncationNotice(page, settings.pageContextLimit);
+    if (notice) await emitChatEvent(tab.id, { action: "AI_CHAT_META", notice });
+  }
+  const context = {
+    type: selectionText ? "selection" : Object.keys(page).length ? "page" : "none",
+    selectionText: selectionText || "",
+    ...page
+  };
+  const prompt = replacePlaceholders(item.prompt, context);
+  const displayPrompt = replacePlaceholders(item.prompt, { selectionText: "", pageText: "", pageTitle: "", pageUrl: "" }).replace(/\n{3,}/g, "\n\n").trim() || item.title;
   await startNewConversation(tab.id, {
-    prompt: settings.pageSummaryPrompt,
-    model: settings.quickModel,
-    thinking: settings.quickThinking,
-    context: { type: "page", ...context },
-    source: surface,
+    prompt,
+    displayPrompt,
+    displayContext: context,
+    title: item.title,
+    processed: true,
+    model: item.model || settings.defaultPromptModel,
+    thinking: normalizeThinking(item.thinking, settings.defaultThinking),
+    reasoningMaxTokens: Number(item.reasoningMaxTokens || settings.defaultReasoningMaxTokens) || 2000,
+    context: { type: "none" },
+    contextForHistory: context,
+    temporary,
+    source: "sidepanel",
     announceSurface: true
   });
 }
@@ -751,37 +857,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (info.menuItemId === "ai-ask-page") return void openComposer(tab, "page");
     if (info.menuItemId === "ai-summarize-page") return void summarizePage(tab);
     if (!String(info.menuItemId).startsWith("ai-template-")) return;
-
-    if (chrome.sidePanel) await chrome.sidePanel.open({ tabId: tab.id });
-
-    const settings = await getSettings();
-    const index = Number(String(info.menuItemId).replace("ai-template-", ""));
-    const item = settings.menuItems[index];
-    if (!item || !(await ensureContentScript(tab.id))) return;
-    let page = {};
-    if (/\{\{page(Text|Title|Url)\}\}/.test(item.prompt)) page = await readPageContext(tab.id, settings.pageContextLimit);
-    const context = {
-      type: info.selectionText ? "selection" : Object.keys(page).length ? "page" : "none",
-      selectionText: info.selectionText || "",
-      ...page
-    };
-    const prompt = replacePlaceholders(item.prompt, context);
-    const displayPrompt = replacePlaceholders(item.prompt, { selectionText: "", pageText: "", pageTitle: "", pageUrl: "" }).replace(/\n{3,}/g, "\n\n").trim() || item.title;
-    activeSurfaces.set(tab.id, "sidepanel");
-    await startNewConversation(tab.id, {
-      prompt,
-      displayPrompt,
-      displayContext: context,
-      title: item.title,
-      processed: true,
-      model: item.model || settings.defaultPromptModel,
-      thinking: normalizeThinking(item.thinking, settings.defaultThinking),
-      reasoningMaxTokens: Number(item.reasoningMaxTokens || settings.defaultReasoningMaxTokens) || 2000,
-      context: { type: "none" },
-      contextForHistory: context,
-      source: "sidepanel",
-      announceSurface: true
-    });
+    await runPromptTemplate(tab, Number(String(info.menuItemId).replace("ai-template-", "")), info.selectionText || "");
   } catch (error) {
     await emitChatEvent(tab.id, { action: "AI_CHAT_ERROR", error: error.message || String(error) });
   }
@@ -794,6 +870,10 @@ chrome.commands.onCommand.addListener(async (command, commandTab) => {
   if (command === "ask-page") await openComposer(tab, "page");
   if (command === "summarize-page") await summarizePage(tab);
 });
+
+function reportChatError(tabId) {
+  return error => emitChatEvent(tabId, { action: "AI_CHAT_ERROR", error: error.message || String(error) });
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab?.id;
@@ -818,40 +898,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "SUMMARIZE_AI_FROM_POPUP": {
         const tab = message.targetTabId ? await chrome.tabs.get(message.targetTabId) : await getActiveTab();
         if (!tab) return { ok: false, error: "Активная вкладка не найдена." };
-        summarizePage(tab, !message.panelAlreadyOpen).catch(console.error);
+        summarizePage(tab, !message.panelAlreadyOpen);
         return { ok: true };
       }
-      case "START_AI_CHAT":
-        {
+      case "RUN_AI_PROMPT": {
         const targetTabId = message.tabId || tabId;
         if (!targetTabId) return { ok: false };
-        startNewConversation(targetTabId, message).catch(error => emitChatEvent(targetTabId, { action: "AI_CHAT_ERROR", error: error.message, surface: message.source }));
+        runPromptTemplate({ id: targetTabId }, Number(message.index), message.selectionText || "", { openPanel: false, temporary: Boolean(message.temporary) }).catch(reportChatError(targetTabId));
         return { ok: true };
-        }
-      case "CONTINUE_AI_CHAT":
-        {
+      }
+      case "START_AI_CHAT": {
         const targetTabId = message.tabId || tabId;
         if (!targetTabId) return { ok: false };
-        continueConversation(targetTabId, message).catch(error => emitChatEvent(targetTabId, { action: "AI_CHAT_ERROR", error: error.message, surface: message.source }));
+        startNewConversation(targetTabId, message).catch(reportChatError(targetTabId));
         return { ok: true };
-        }
+      }
+      case "CONTINUE_AI_CHAT": {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false };
+        continueConversation(targetTabId, message).catch(reportChatError(targetTabId));
+        return { ok: true };
+      }
       case "REGENERATE_AI_CHAT": {
         const targetTabId = message.tabId || tabId;
         if (!targetTabId) return { ok: false };
-        regenerateConversation(targetTabId, message).catch(error => emitChatEvent(targetTabId, { action: "AI_CHAT_ERROR", error: error.message, surface: message.source }));
+        regenerateConversation(targetTabId, message).catch(reportChatError(targetTabId));
         return { ok: true };
       }
       case "EDIT_AI_MESSAGE": {
         const targetTabId = message.tabId || tabId;
         if (!targetTabId) return { ok: false };
-        editConversation(targetTabId, message).catch(error => emitChatEvent(targetTabId, { action: "AI_CHAT_ERROR", error: error.message, surface: message.source }));
-        return { ok: true };
-      }
-      case "OPEN_AI_SIDE_PANEL": {
-        if (!tabId || !chrome.sidePanel) return { ok: false, error: "Chrome Side Panel недоступен в этой версии браузера." };
-        if (message.draft) drafts.set(tabId, message.draft);
-        activeSurfaces.set(tabId, "sidepanel");
-        chrome.sidePanel.open({ tabId }).catch(console.error);
+        editConversation(targetTabId, message).catch(reportChatError(targetTabId));
         return { ok: true };
       }
       case "GET_ACTIVE_AI_CHAT": {
@@ -860,6 +937,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const session = await loadSession(targetTab.id);
         const settings = await getSettings();
         return { ok: true, tabId: targetTab.id, session, draft: drafts.get(targetTab.id) || null, generating: activeRequests.has(targetTab.id), sendOnEnter: settings.sendOnEnter, theme: settings.theme, model: settings.quickModel, thinking: settings.quickThinking, reasoningMaxTokens: settings.quickReasoningMaxTokens, modelCatalog: settings.apiProvider === "openrouter" ? await getModelCatalog() : [], recentModels: settings.recentModels || [], menuItems: settings.menuItems || [], pageContextLimit: settings.pageContextLimit, sidePanelTabBehavior: settings.sidePanelTabBehavior };
+      }
+      // Cheap poll used while streaming: no settings, catalog or message history.
+      case "GET_GENERATION_STATE": {
+        const session = sessions.get(message.tabId) || null;
+        return { ok: true, generating: activeRequests.has(message.tabId), sessionId: session?.id || null, lastRole: session?.messages?.at(-1)?.role || null, partialAnswer: session?.partialAnswer || "", partialReasoning: session?.partialReasoning || "" };
       }
       case "AI_SELECTION_CHANGED": {
         if (!tabId) return { ok: false };
@@ -874,25 +956,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "PREVIEW_PAGE_CONTEXT": {
         const targetTabId = message.tabId || tabId;
         if (!targetTabId) return { ok: false };
-        if (!(await ensureContentScript(targetTabId))) return { ok: false, error: "Содержимое этой страницы недоступно." };
         const settings = await getSettings();
-        const includeLinks = Boolean(message.includeLinks);
-        const linkLimit = Math.min(16000, Math.max(2000, Math.floor(settings.pageContextLimit * .25)));
-        let context = await sendToTab(targetTabId, { action: "GET_AI_PAGE_CONTEXT", limit: Number.MAX_SAFE_INTEGER, includeLinks, linkLimit });
-        if (context) context = await augmentWithFrameText(targetTabId, context, includeLinks, linkLimit);
-        return context ? { ok: true, length: context.pageText.length, linkCount: context.pageLinks?.length || 0, title: context.pageTitle, url: context.pageUrl } : { ok: false, error: "Не удалось извлечь текст страницы." };
-      }
-      case "CLAIM_AI_SURFACE": {
-        const targetTabId = message.tabId || tabId;
-        if (!targetTabId) return { ok: false };
-        activeSurfaces.set(targetTabId, message.surface === "sidepanel" ? "sidepanel" : "page");
-        return { ok: true };
+        const context = await collectPageContext(targetTabId, Boolean(message.includeLinks), settings.pageContextLimit).catch(error => ({ error }));
+        if (context.error) return { ok: false, error: context.error.message };
+        return { ok: true, length: context.pageText.length, limit: settings.pageContextLimit, linkCount: context.pageLinks?.length || 0, title: context.pageTitle, url: context.pageUrl };
       }
       case "OPEN_AI_CHAT_WINDOW": {
         const targetTabId = message.tabId || tabId;
         if (!targetTabId) return { ok: false, error: "Вкладка чата не найдена." };
         if (message.draft) drafts.set(targetTabId, { ...message.draft, mode: "none", selectionText: "" });
-        activeSurfaces.set(targetTabId, "sidepanel");
         const settings = await getSettings();
         const browserWindow = await chrome.windows.getCurrent().catch(() => null);
         const compact = Number(browserWindow?.width || 1200) < 900;
@@ -939,21 +1011,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (chrome.storage.session) await chrome.storage.session.remove(`chat_${targetTabId}`);
         return { ok: true };
       }
-      case "RESTORE_AI_WINDOW": {
-        const targetTabId = message.tabId;
-        if (!targetTabId || !(await ensureContentScript(targetTabId))) return { ok: false, error: "Нельзя развернуть чат на этой странице." };
-        const settings = await getSettings();
-        activeSurfaces.set(targetTabId, "page");
-        const draft = message.draft || drafts.get(targetTabId);
-        const session = await loadSession(targetTabId);
-        if (draft && !session) await sendToTab(targetTabId, { action: "OPEN_AI_DRAFT", draft, sendOnEnter: settings.sendOnEnter, theme: settings.theme, pageContextLimit: settings.pageContextLimit, modelCatalog: settings.apiProvider === "openrouter" ? await getModelCatalog() : [], recentModels: settings.recentModels || [], reasoningMaxTokens: settings.quickReasoningMaxTokens });
-        else if (session) await sendToTab(targetTabId, { action: "OPEN_AI_CHAT_HISTORY", session, generating: activeRequests.has(targetTabId), sendOnEnter: settings.sendOnEnter, theme: settings.theme });
-        if (chrome.sidePanel?.close) {
-          const targetTab = await chrome.tabs.get(targetTabId);
-          if (targetTab.windowId != null) await chrome.sidePanel.close({ windowId: targetTab.windowId }).catch(() => chrome.sidePanel.close({ tabId: targetTabId }).catch(() => {}));
-        }
-        return { ok: true };
-      }
       case "GET_SAVED_AI_CHATS": {
         const { chats = [] } = await storageGet("local", ["chats"]);
         const settings = await getSettings();
@@ -965,22 +1022,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       case "OPEN_SAVED_AI_CHAT": {
         const targetTab = message.targetTabId ? await chrome.tabs.get(message.targetTabId) : await getActiveTab();
-        if (!targetTab?.id) return { ok: false, error: "Чат нельзя открыть на этой странице." };
+        if (!targetTab?.id) return { ok: false, error: "Не найдена вкладка, к которой можно привязать чат." };
         const { chats = [] } = await storageGet("local", ["chats"]);
         const chat = chats.find(item => item.id === message.chatId);
         if (!chat) return { ok: false, error: "Чат не найден." };
+        await stopGeneration(targetTab.id, true);
         sessions.set(targetTab.id, { ...chat });
+        drafts.delete(targetTab.id);
         await persistSession(targetTab.id, chat);
-        if (message.openInSidePanel) {
-          activeSurfaces.set(targetTab.id, "sidepanel");
-          if (!message.panelAlreadyOpen) chrome.sidePanel.open({ tabId: targetTab.id }).catch(console.error);
-          chrome.runtime.sendMessage({ action: "AI_SURFACE_OWNER", sourceTabId: targetTab.id, surfaceOwner: "sidepanel", newChat: true, savedChat: true }).catch(() => {});
-          return { ok: true };
-        }
-        if (!(await ensureContentScript(targetTab.id))) return { ok: false, error: "Чат нельзя открыть на этой странице." };
-        activeSurfaces.set(targetTab.id, "page");
-        const settings = await getSettings();
-        await sendToTab(targetTab.id, { action: "OPEN_AI_CHAT_HISTORY", session: chat, sendOnEnter: settings.sendOnEnter, theme: settings.theme });
+        if (!message.panelAlreadyOpen) chrome.sidePanel.open({ tabId: targetTab.id }).catch(console.error);
+        chrome.runtime.sendMessage({ action: "AI_SURFACE_OWNER", sourceTabId: targetTab.id, surfaceOwner: "sidepanel", newChat: true, savedChat: true }).catch(() => {});
         return { ok: true };
       }
       case "STOP_AI_CHAT":
@@ -988,7 +1039,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { ok: true };
       case "GET_AI_SETTINGS_SUMMARY": {
         const settings = await getSettings();
-        return { model: settings.quickModel, server: settings.apiServer, provider: settings.apiProvider, caching: settings.enableCaching, theme: settings.theme, recentChatsLimit: settings.recentChatsLimit };
+        return { model: settings.quickModel, server: settings.apiServer, provider: settings.apiProvider, caching: settings.enableCaching, theme: settings.theme, recentChatsLimit: settings.recentChatsLimit, hasApiKey: Boolean(settings.apiKey) };
       }
       default:
         return null;
@@ -1001,7 +1052,6 @@ chrome.tabs.onRemoved.addListener(tabId => {
   stopGeneration(tabId);
   sessions.delete(tabId);
   drafts.delete(tabId);
-  activeSurfaces.delete(tabId);
   if (chrome.storage.session) chrome.storage.session.remove(`chat_${tabId}`);
 });
 

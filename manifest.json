@@ -2,9 +2,12 @@
   "manifest_version": 3,
   "name": "AI Text Tools",
   "description": "Быстрые AI-запросы по выделению, странице и изображениям с потоковым ответом.",
-  "version": "6.7.7",
-  "permissions": ["contextMenus", "storage", "activeTab", "scripting", "sidePanel", "tabs"],
+  "version": "6.8.0",
+  "permissions": ["contextMenus", "storage", "unlimitedStorage", "activeTab", "scripting", "sidePanel", "tabs"],
   "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: blob:"
+  },
   "background": {
     "service_worker": "background.js"
   },
@@ -23,7 +26,7 @@
   },
   "commands": {
     "ask-ai": {
-      "suggested_key": { "default": "Ctrl+Space", "mac": "Command+Space" },
+      "suggested_key": { "default": "Ctrl+Space", "mac": "Command+Shift+Space" },
       "description": "Задать вопрос AI"
     },
     "ask-page": {
@@ -38,8 +41,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["marked.min.js", "content.js"],
-      "css": ["content.css"],
+      "js": ["content.js"],
       "run_at": "document_idle"
     }
   ],

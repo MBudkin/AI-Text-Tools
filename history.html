@@ -1,4 +1,71 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>История чатов · AI Text Tools</title><link rel="stylesheet" href="vendor/katex/katex.min.css"><style>
-:root{color-scheme:dark}*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#56657d transparent}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{border:2px solid transparent;border-radius:999px;background:#56657d;background-clip:padding-box}::-webkit-scrollbar-thumb:hover{background:#71819b;background-clip:padding-box}body{margin:0;color:#e9eef7;background:#0d121b;font:14px/1.5 Inter,system-ui,sans-serif}.wrap{max-width:1100px;margin:auto;padding:28px}header{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px}.brand{display:flex;align-items:center;gap:11px}.brand img{width:42px;height:42px}h1{margin:0;font-size:21px}.muted{color:#8f9db2;font-size:12px}.tools{display:flex;gap:8px;flex-wrap:wrap}input[type="search"],button{height:39px;border:1px solid #344158;border-radius:9px;color:#e8edf7;background:#151d29;font:inherit}input[type="search"]{min-width:250px;padding:0 11px}button{padding:0 13px;cursor:pointer}button:hover{background:#253147}button:disabled{opacity:.45;cursor:not-allowed}.danger{color:#ffcbd2;background:#3b2028}.compact-danger{border-color:#5b303b}.chat-select{width:16px;height:16px;margin:0 2px 0 0;accent-color:#7567f2;cursor:pointer}.list{display:grid;gap:12px}.entry{overflow:hidden;border:1px solid #2d394d;border-radius:13px;background:#141b27}.entry-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 13px;border-bottom:1px solid #293449;color:#96a5ba;font-size:11px}.entry-head button{height:29px;padding:0 9px}.pill,.image-badge{display:inline-flex;padding:2px 7px;border:1px solid #39475e;border-radius:999px}.image-badge{margin-top:8px;color:#dce6ff;font-size:11px}.message-images{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}.message-image{width:auto;height:auto;padding:2px;border-radius:9px}.message-image img{display:block;width:72px;height:72px;border-radius:7px;object-fit:cover}.cell{min-width:0;padding:14px}.label{margin-bottom:7px;color:#79879c;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}pre{max-height:320px;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-word;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}details{margin-bottom:12px;padding:10px;border:1px solid #303d52;border-radius:9px;color:#9eabc0}summary{cursor:pointer;font-size:12px}.conversation{display:grid;gap:10px}.turn{max-width:92%;padding:11px;border-radius:10px;background:#192230}.turn.user{justify-self:end;background:#2b3560}.turn.assistant{justify-self:start}.empty{padding:50px;border:1px dashed #334057;border-radius:13px;color:#8d9bb0;text-align:center}.image-viewer{position:fixed;inset:0;z-index:50;display:grid;grid-template-rows:1fr auto;place-items:center;padding:52px 22px 20px;background:#05070be6;backdrop-filter:blur(5px)}.image-viewer.hidden{display:none}.image-viewer img{max-width:100%;max-height:calc(100vh - 110px);border-radius:11px;box-shadow:0 18px 70px #000c;object-fit:contain}.image-viewer button{position:absolute;top:12px;right:12px;width:36px;height:36px;padding:0;border-radius:50%}.image-viewer button::before,.image-viewer button::after{content:"";position:absolute;top:50%;left:50%;width:52%;height:1.5px;border-radius:999px;background:currentColor;transform-origin:center}.image-viewer button::before{transform:translate(-50%,-50%) rotate(45deg)}.image-viewer button::after{transform:translate(-50%,-50%) rotate(-45deg)}.image-viewer-caption{padding-top:9px;color:#dce5f2}@media(max-width:750px){.wrap{padding:15px}header{align-items:flex-start;flex-direction:column}.turn{max-width:100%}input[type="search"]{min-width:0;width:100%}}
-.entry,.cell,.conversation,.turn,.markdown{min-width:0;max-width:100%}.conversation{width:100%;overflow:hidden}.turn{width:92%;overflow:hidden}.entry-head strong{min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.markdown{width:100%;overflow-wrap:anywhere;word-break:break-word;font-size:13px;line-height:1.6}.markdown>:first-child{margin-top:0}.markdown>:last-child{margin-bottom:0}.markdown p{margin:.65em 0}.markdown p,.markdown li,.markdown h1,.markdown h2,.markdown h3,.markdown h4,.markdown a{max-width:100%;overflow-wrap:anywhere;word-break:break-word}.markdown h1,.markdown h2,.markdown h3,.markdown h4{margin:1em 0 .45em;line-height:1.25}.markdown h1{font-size:1.45em}.markdown h2{font-size:1.3em}.markdown h3{font-size:1.15em}.markdown ul,.markdown ol{max-width:100%;margin:.55em 0;padding-left:1.7em}.markdown blockquote{max-width:100%;margin:.7em 0;padding:.25em .8em;border-left:3px solid #6878a8;color:#b9c5d8;overflow-wrap:anywhere}.markdown a{color:#7fc3ff;text-underline-offset:2px}.markdown code{max-width:100%;padding:2px 4px;border-radius:4px;color:#eccaff;background:#0b111a;white-space:break-spaces;font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}.markdown pre{width:100%;max-width:100%;max-height:420px;margin:.7em 0;padding:10px 11px;border:1px solid #2d3a4f;border-radius:8px;color:#edf2fa;background:#090e15;white-space:pre;overflow:auto}.markdown pre code{padding:0;color:inherit;background:transparent;white-space:pre}.markdown .table-scroll{width:100%;max-width:100%;overflow:auto}.markdown table{width:max-content;border-collapse:collapse}.markdown th,.markdown td{max-width:320px;padding:6px 8px;border:1px solid #3a4961;text-align:left;vertical-align:top;white-space:normal;overflow-wrap:anywhere;word-break:break-word}.table-cell-content{min-width:0;max-width:320px;white-space:normal;overflow-wrap:anywhere;word-break:break-word}.table-cell-content code{white-space:break-spaces;overflow-wrap:anywhere;word-break:break-word}.markdown img{max-width:100%;height:auto;border-radius:8px}.markdown .katex-display{max-width:100%;overflow-x:auto;overflow-y:hidden}.plain-text{width:100%;max-width:100%;max-height:420px;overflow-wrap:anywhere;word-break:break-word}.view-mode{min-width:92px}@media(max-width:750px){.turn{width:100%}}
-</style></head><body><div class="wrap"><header><div class="brand"><img src="icon48.png" alt=""><div><h1>История чатов</h1><div class="muted" id="count">Локальное хранилище расширения</div></div></div><div class="tools"><input id="search" type="search" placeholder="Поиск по чатам"><button id="viewMode" class="view-mode" type="button" title="Показать исходный текст">Текст</button><button id="deleteSelected" class="danger" disabled>Удалить выбранные</button><button id="clear" class="danger">Очистить всё</button></div></header><main id="history" class="list"></main></div><div id="imageViewer" class="image-viewer hidden" role="dialog" aria-modal="true" aria-label="Просмотр изображения"><button id="imageViewerClose" type="button" title="Закрыть" aria-label="Закрыть"></button><img id="imageViewerImage" alt=""><div id="imageViewerCaption" class="image-viewer-caption"></div></div><script src="marked.min.js"></script><script src="vendor/katex/katex.min.js"></script><script src="vendor/katex/contrib/auto-render.min.js"></script><script src="history.js"></script></body></html>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>История чатов · AI Text Tools</title>
+  <link rel="stylesheet" href="vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="theme.css">
+  <script src="common.js"></script>
+  <style>
+    body{font-size:14px}
+    .topbar{position:sticky;top:0;z-index:5;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px)}
+    .topbar-inner,.wrap{max-width:1040px;margin:auto;padding:0 24px}
+    .topbar-inner{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-top:14px;padding-bottom:14px}
+    .brand{display:flex;align-items:center;gap:11px;margin-right:auto}
+    .brand img{width:36px;height:36px}
+    h1{margin:0;font-size:18px}
+    .muted{color:var(--text-3);font-size:12px}
+    .tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .search{position:relative;display:flex;align-items:center}
+    .search .icon-svg{position:absolute;left:10px;color:var(--text-3)}
+    .search input{width:260px;height:34px;padding:0 10px 0 32px}
+    .wrap{padding-top:20px;padding-bottom:40px}
+    .list{display:grid;gap:14px}
+    .entry{min-width:0;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-sm)}
+    .entry-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px 10px 14px;border-bottom:1px solid var(--border);color:var(--text-3);font-size:11.5px}
+    .entry-head strong{flex:1;min-width:120px;overflow:hidden;color:var(--text);font-size:13.5px;text-overflow:ellipsis;white-space:nowrap}
+    .entry-head .btn{min-height:28px;padding:0 10px;font-size:12px}
+    .chat-select{width:16px;height:16px;margin:0 2px 0 0;cursor:pointer}
+    .pill,.image-badge{display:inline-flex;align-items:center;padding:1px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);white-space:nowrap}
+    .image-badge{margin-top:8px;font-size:11px}
+    .cell{min-width:0;padding:14px}
+    details.context{margin-bottom:12px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);color:var(--text-2);background:var(--surface-2)}
+    details.context summary{cursor:pointer;font-size:12px}
+    details.context pre{max-height:300px;margin:8px 0 0;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.55 var(--mono)}
+    .entry,.cell,.conversation,.turn,.markdown{min-width:0;max-width:100%}
+    .conversation{display:grid;gap:10px}
+    .turn{max-width:88%;padding:10px 12px;border-radius:12px}
+    .turn.user{justify-self:end;color:var(--user-text);background:var(--user-bubble);border-bottom-right-radius:4px}
+    .turn.assistant{justify-self:stretch;max-width:100%;border:1px solid var(--border);background:var(--surface)}
+    .turn.user .md code{color:inherit;background:rgba(255,255,255,.16)}
+    .turn.user .md a{color:inherit}
+    .label{margin-bottom:6px;color:var(--text-3);font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+    .turn.user .label{color:var(--user-muted)}
+    .markdown{font-size:13px}
+    .plain-text{margin:0;max-height:420px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.55 var(--mono)}
+    .message-images{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+    .message-image{padding:0;overflow:hidden;border:1px solid rgba(255,255,255,.3);border-radius:9px;cursor:zoom-in;background:transparent}
+    .message-image img{display:block;width:72px;height:72px;object-fit:cover}
+    .empty{display:grid;justify-items:center;gap:8px;padding:56px 20px;border:1px dashed var(--border-strong);border-radius:var(--radius-lg);color:var(--text-3);text-align:center}
+    .empty .icon-svg{width:28px;height:28px}
+    @media(max-width:760px){.topbar-inner,.wrap{padding-left:14px;padding-right:14px}.search,.search input{width:100%}.tools{width:100%}.turn{max-width:100%}}
+  </style>
+</head>
+<body>
+  <div class="topbar"><div class="topbar-inner">
+    <div class="brand"><img src="icon48.png" alt=""><div><h1>История чатов</h1><div class="muted" id="count">Локальное хранилище расширения</div></div></div>
+    <div class="tools">
+      <label class="search"><span class="sr-only">Поиск по чатам</span><span id="searchIcon"></span><input id="search" type="search" placeholder="Поиск по чатам"></label>
+      <button id="viewMode" class="btn" type="button">Текст</button>
+      <button id="deleteSelected" class="btn btn-danger" type="button" disabled>Удалить выбранные</button>
+      <button id="clear" class="btn btn-danger" type="button">Очистить всё</button>
+      <button id="theme" class="icon-btn" type="button"></button>
+    </div>
+  </div></div>
+  <div class="wrap"><main id="history" class="list"></main></div>
+  <div id="imageViewer" class="image-viewer hidden" role="dialog" aria-modal="true" aria-label="Просмотр изображения"><button id="imageViewerClose" class="icon-btn image-viewer-close" type="button" title="Закрыть" aria-label="Закрыть"></button><img id="imageViewerImage" alt=""><div id="imageViewerCaption" class="image-viewer-caption"></div></div>
+  <div id="toasts" class="toast-stack" role="status" aria-live="polite"></div>
+  <script src="marked.min.js"></script><script src="vendor/katex/katex.min.js"></script><script src="vendor/katex/contrib/auto-render.min.js"></script><script src="history.js"></script>
+</body>
+</html>

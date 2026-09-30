@@ -54,7 +54,7 @@ const requests = [];
 let lastRequest = null;
 let sidePanelCloseCalls = 0;
 globalThis.chrome = {
-  runtime: { onInstalled: new ChromeEvent(), onStartup: new ChromeEvent(), onMessage: new ChromeEvent(), sendMessage: async () => ({ ok: true }), getURL: path => `chrome-extension://test/${path}` },
+  runtime: { onInstalled: new ChromeEvent(), onStartup: new ChromeEvent(), onMessage: new ChromeEvent(), sendMessage: async message => { if (message?.sourceTabId != null) sentMessages.push({ tabId: message.sourceTabId, message }); return { ok: true }; }, getURL: path => `chrome-extension://test/${path}` },
   contextMenus: { onClicked: new ChromeEvent(), removeAll(callback) { createdMenus.length = 0; callback(); }, create(item) { createdMenus.push(item); } },
   commands: { onCommand: new ChromeEvent() },
   tabs: { onRemoved: new ChromeEvent(), query: async () => [], get: async id => ({ id, windowId: 1 }), sendMessage: async (tabId, message) => { sentMessages.push({ tabId, message }); return { ok: true }; } },
@@ -228,10 +228,6 @@ const draft = { prompt: "Черновик", model: "image/model", thinking: "off
 await new Promise(resolve => messageListener({ action: "SAVE_AI_DRAFT", tabId: 12, draft }, {}, resolve));
 const draftState = await new Promise(resolve => messageListener({ action: "GET_ACTIVE_AI_CHAT", tabId: 12 }, {}, resolve));
 assert.deepEqual(draftState.draft, draft);
-const restored = await new Promise(resolve => messageListener({ action: "RESTORE_AI_WINDOW", tabId: 12, draft }, {}, resolve));
-assert.equal(restored.ok, true);
-assert.ok(sentMessages.some(item => item.tabId === 12 && item.message.action === "OPEN_AI_DRAFT"));
-assert.equal(sidePanelCloseCalls, 1);
 await new Promise(resolve => messageListener({ action: "RESET_AI_CHAT", tabId: 12 }, {}, resolve));
 const resetState = await new Promise(resolve => messageListener({ action: "GET_ACTIVE_AI_CHAT", tabId: 12 }, {}, resolve));
 assert.equal(resetState.draft, null);
@@ -271,26 +267,119 @@ assert.ok(!localData.chats.some(chat => chat.id === "delete-me"));
 assert.equal(localData.history.length, 0);
 assert.equal(sessionData.chat_777.historyDisabled, true);
 
-const contentSource = fs.readFileSync(path.join(root, "content.js"), "utf8");
-const optionsSource = fs.readFileSync(path.join(root, "options.html"), "utf8");
-assert.ok(contentSource.includes('element.id === "ai-text-tools-host"'));
+const streamingFetch = globalThis.fetch;
+const encoder = new TextEncoder();
+globalThis.fetch = async (url, init) => {
+  const lastContent = JSON.parse(init?.body || "{}").messages?.at(-1)?.content;
+  if (lastContent === "Медленно") {
+    requests.push({ url, init });
+    return new Response(new ReadableStream({ start(stream) {
+      stream.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "Частично" } }] })}\n\n`));
+      init.signal.addEventListener("abort", () => stream.error(new DOMException("Aborted", "AbortError")));
+    } }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+  }
+  if (lastContent === "Без перевода строки") {
+    requests.push({ url, init });
+    const sse = `data: ${JSON.stringify({ choices: [{ delta: { content: "Ответ" } }] })}\n\ndata: ${JSON.stringify({ choices: [], usage: { total_tokens: 5, cost: 0.002 } })}`;
+    return new Response(sse, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+  }
+  return streamingFetch(url, init);
+};
+
+await new Promise(resolve => messageListener({ action: "START_AI_CHAT", prompt: "Медленно", model: "openrouter/auto", thinking: "none", context: { type: "none" } }, { tab: { id: 16 } }, resolve));
+for (let attempt = 0; attempt < 50 && !sentMessages.some(item => item.tabId === 16 && item.message.action === "AI_CHAT_DELTA"); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+await new Promise(resolve => messageListener({ action: "STOP_AI_CHAT", tabId: 16 }, {}, resolve));
+for (let attempt = 0; attempt < 50 && !sentMessages.some(item => item.tabId === 16 && item.message.action === "AI_CHAT_STOPPED"); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+const stoppedState = await new Promise(resolve => messageListener({ action: "GET_ACTIVE_AI_CHAT", tabId: 16 }, {}, resolve));
+assert.equal(stoppedState.generating, false);
+assert.equal(stoppedState.session.messages.at(-1).role, "assistant");
+assert.equal(stoppedState.session.messages.at(-1).content, "Частично");
+assert.equal(stoppedState.session.messages.at(-1).interrupted, "stopped");
+assert.equal(localData.chats.find(chat => chat.id === stoppedState.session.id).messages.at(-1).interrupted, "stopped");
+
+await new Promise(resolve => messageListener({ action: "START_AI_CHAT", prompt: "Без перевода строки", model: "openrouter/auto", thinking: "none", context: { type: "none" } }, { tab: { id: 17 } }, resolve));
+for (let attempt = 0; attempt < 50 && !sentMessages.some(item => item.tabId === 17 && item.message.action === "AI_CHAT_DONE"); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+assert.equal(sentMessages.find(item => item.tabId === 17 && item.message.action === "AI_CHAT_DONE").message.requestCost, 0.002);
+globalThis.fetch = streamingFetch;
+
+await chrome.runtime.onInstalled.listeners[0]();
+assert.equal(localData.apiKey, "test-key");
+assert.equal(syncData.apiKey, undefined);
+
+// Long pages: truncated to the limit by default, sent in full only when the panel asked for it.
+const longPage = "Очень длинная страница. ".repeat(3500).trim();
+const pageSendMessage = chrome.tabs.sendMessage;
+chrome.tabs.sendMessage = async (tabId, message) => {
+  if (message.action === "GET_AI_PAGE_CONTEXT") return { pageText: longPage, pageTitle: "Длинная", pageUrl: "https://example.test/long", pageLinks: [] };
+  return pageSendMessage(tabId, message);
+};
+for (const [tabId, overflow] of [[30, undefined], [31, "full"]]) {
+  await new Promise(resolve => messageListener({ action: "START_AI_CHAT", tabId, prompt: "Суть", model: "openrouter/auto", thinking: "none", context: { type: "page", overflow }, source: "sidepanel" }, {}, resolve));
+  for (let attempt = 0; attempt < 50 && !sentMessages.some(item => item.tabId === tabId && item.message.action === "AI_CHAT_DONE"); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+}
+const truncatedUser = JSON.parse(requests.find(item => JSON.parse(item.init.body).messages.at(-1).content.includes("Длинная") && !JSON.parse(item.init.body).messages.at(-1).content.includes(longPage)).init.body).messages.at(-1).content;
+assert.ok(truncatedUser.includes("[Текст страницы обрезан расширением: 60000 из"));
+assert.ok(sentMessages.some(item => item.tabId === 30 && item.message.notice?.includes("обрезан")));
+assert.ok(requests.some(item => JSON.parse(item.init.body).messages.at(-1).content.includes(longPage)), "overflow: full keeps the whole page");
+assert.ok(!sentMessages.some(item => item.tabId === 31 && item.message.notice?.includes("обрезан")));
+chrome.tabs.sendMessage = pageSendMessage;
+
+const read = file => fs.readFileSync(path.join(root, file), "utf8");
+const contentSource = read("content.js");
+const commonSource = read("common.js");
+const themeSource = read("theme.css");
+const sidePanelHtml = read("sidepanel.html");
+const sidePanelSource = `${read("sidepanel.js")}\n${commonSource}`;
+const historySource = `${read("history.js")}\n${commonSource}`;
+const popupSource = read("popup.js");
+
+// Content script: context extraction only, no chat UI injected into pages.
+assert.ok(!contentSource.includes("marked"), "Content script must not render chat UI");
+assert.ok(!manifest.content_scripts[0].js.includes("marked.min.js"));
+assert.ok(!manifest.content_scripts[0].css);
 assert.ok(contentSource.includes('case "GET_AI_SELECTION"'));
 assert.ok(contentSource.includes("function extractPageLinks"));
-assert.ok(contentSource.includes('const CONTENT_SCRIPT_VERSION = "6.7.7"'));
+assert.ok(contentSource.includes("CONTENT_SCRIPT_VERSION = chrome.runtime.getManifest().version"));
 assert.ok(contentSource.includes("function disconnectOrphanedContentScript"));
 assert.ok(contentSource.includes("globalThis.chrome?.runtime"));
+assert.ok(contentSource.includes("hasOpenPanel"), "Selection is published only while a panel is open");
 assert.ok(!contentSource.includes('chrome.runtime.sendMessage({ action: "AI_SELECTION_CHANGED"'));
-assert.ok(optionsSource.includes("Используется только при Reasoning → Custom"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes('id="temporary"'));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes('id="includePageLinks"'));
+assert.ok(manifest.permissions.includes("unlimitedStorage"));
+assert.ok(manifest.content_security_policy.extension_pages.includes("img-src 'self' data: blob:"));
+
+// Every page shares the theme and helpers; tokens are defined for both palettes.
+for (const page of ["sidepanel.html", "popup.html", "history.html", "options.html"]) {
+  const html = read(page);
+  assert.ok(html.includes('href="theme.css"'), `${page} must use theme.css`);
+  assert.ok(html.indexOf('src="common.js"') > 0 && html.indexOf('src="common.js"') < html.indexOf("</head>"), `${page} must load common.js in <head> to avoid a theme flash`);
+  assert.ok(!/body\.light/.test(html), `${page} must use theme tokens instead of body.light overrides`);
+}
+const tokenBlock = selector => themeSource.slice(themeSource.indexOf(selector)).match(/\{([\s\S]*?)\n\}/)[1];
+const tokenNames = block => new Set([...block.matchAll(/(--[\w-]+)\s*:/g)].map(match => match[1]));
+const darkTokens = tokenNames(tokenBlock(':root[data-theme="dark"]'));
+const lightTokens = tokenNames(tokenBlock(':root[data-theme="light"]'));
+for (const token of lightTokens) assert.ok(darkTokens.has(token), `Light token ${token} has no dark counterpart`);
+for (const file of ["theme.css", "sidepanel.html", "popup.html", "history.html", "options.html"]) {
+  for (const [, token] of read(file).matchAll(/var\((--[\w-]+)/g)) assert.ok(darkTokens.has(token), `${file} uses undefined token ${token}`);
+}
+for (const name of ["copy", "edit", "refresh", "sun", "moon", "monitor", "arrowUp", "stop", "trash", "hourglass"]) assert.ok(commonSource.includes(`  ${name}: '`), `Icon ${name} is missing`);
+
+assert.ok(read("options.html").includes("Используется только при Reasoning → Custom"));
+assert.ok(read("options.html").includes('<option value="system">Как в системе</option>'));
+assert.ok(sidePanelHtml.includes('id="temporary"'));
+assert.ok(sidePanelHtml.includes('id="includePageLinks"'));
+assert.ok(sidePanelHtml.includes('id="overflowBar"'));
+assert.ok(sidePanelHtml.includes('id="scrollBottom"'));
 assert.ok(fs.existsSync(path.join(root, "vendor", "katex", "katex.min.js")));
 assert.ok(fs.existsSync(path.join(root, "vendor", "katex", "katex.min.css")));
+assert.ok(!fs.existsSync(path.join(root, "vendor", "katex", "katex.js")), "Unminified KaTeX is not shipped");
 const katex = (await import(`${pathToFileURL(path.join(root, "vendor", "katex", "katex.min.js"))}?test=${Date.now()}`)).default;
 assert.ok(katex.renderToString("x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}", { throwOnError: false }).includes("katex"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes("vendor/katex/katex.min.js"));
-const sidePanelSource = fs.readFileSync(path.join(root, "sidepanel.js"), "utf8");
-assert.ok(sidePanelSource.includes("renderMathInElement"));
-const mathHelpers = sidePanelSource.match(/function normalizeMathSource[\s\S]*?function looksLikeMath[^\n]+/)[0];
+assert.ok(sidePanelHtml.includes("vendor/katex/katex.min.js"));
+
+// Markdown helpers live in common.js and are shared by the side panel and history.
+assert.ok(commonSource.includes("renderMathInElement"));
+const mathHelpers = commonSource.match(/function normalizeMathSource[\s\S]*?function looksLikeMath[^\n]+/)[0];
 const normalizeMathSource = new Function(`${mathHelpers}; return normalizeMathSource;`)();
 assert.ok(normalizeMathSource("[ ax^2 + bx + c = 0 ]").includes("$$"));
 assert.ok(normalizeMathSource("\\[ x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a} \\]").includes("$$"));
@@ -300,56 +389,53 @@ const streamedMarkdown = "Введение\n\n```js\nconst x = 1;\n\nconsole.log
 assert.equal(streamedMarkdown.slice(streamingBoundary(streamedMarkdown)), "Хвост");
 assert.ok(sidePanelSource.includes("safeMarkdown(stableText.slice(state.streamStableText.length), false)"));
 assert.ok(sidePanelSource.includes('const messageContextType = startsNewConversation ? state.mode : "none"'));
-assert.ok(sidePanelSource.includes('node.target = "_blank"'));
-assert.ok(sidePanelSource.includes('node.rel = "noopener noreferrer"'));
-assert.ok(sidePanelSource.includes("['http:', 'https:'].includes(url.protocol)"));
+assert.ok(commonSource.includes('node.target = "_blank"'));
+assert.ok(commonSource.includes('node.rel = "noopener noreferrer"'));
+assert.ok(commonSource.includes("['http:', 'https:'].includes(url.protocol)"));
+assert.ok(commonSource.includes("function replaceRemoteImage"));
 assert.ok(sidePanelSource.includes("setTimeout(() => { renderTimer = null; updateCurrent(); }, 28)"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes('id="chatModel"'));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes('id="chatThinking"'));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes('id="chatOptions"'));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes('id="imageViewer"'));
+assert.ok(sidePanelSource.includes('action: "GET_GENERATION_STATE"'), "Streaming reconciliation uses the lightweight state poll");
+assert.ok(sidePanelSource.includes('action: "RUN_AI_PROMPT"'));
+for (const id of ["chatModel", "chatThinking", "chatOptions", "imageViewer", "editBar"]) assert.ok(sidePanelHtml.includes(`id="${id}"`));
+assert.ok(!sidePanelHtml.includes('id="insertPrompt"'));
+assert.ok(!sidePanelHtml.includes('id="promptMenu"'));
+assert.ok(!sidePanelHtml.includes("<datalist"), "Model selection uses the searchable picker");
 assert.ok(sidePanelSource.includes("openImageViewer"));
-assert.ok(fs.readFileSync(path.join(root, "history.html"), "utf8").includes('id="imageViewer"'));
-assert.ok(fs.readFileSync(path.join(root, "history.js"), "utf8").includes("messageImageUrls"));
-assert.ok(fs.readFileSync(path.join(root, "history.html"), "utf8").includes('id="viewMode"'));
-assert.ok(fs.readFileSync(path.join(root, "history.html"), "utf8").includes("marked.min.js"));
-assert.ok(fs.readFileSync(path.join(root, "history.js"), "utf8").includes("renderAsMarkdown = true"));
-assert.ok(fs.readFileSync(path.join(root, "history.js"), "utf8").includes("safeMarkdown(text)"));
-assert.ok(fs.readFileSync(path.join(root, "history.html"), "utf8").includes(".entry,.cell,.conversation,.turn,.markdown{min-width:0;max-width:100%}"));
-assert.ok(fs.readFileSync(path.join(root, "history.js"), "utf8").includes('scroll.className = "table-scroll"'));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes('id="editBar"'));
-assert.ok(!fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes('id="insertPrompt"'));
-assert.ok(!fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes('id="promptMenu"'));
-assert.ok(sidePanelSource.includes("normalizeMathSource"));
 assert.ok(sidePanelSource.includes("models.size > 1"));
 assert.ok(!sidePanelSource.includes("parts.push(`всего $"));
-assert.ok(fs.readFileSync(path.join(root, "background.js"), "utf8").includes('case "EDIT_AI_MESSAGE"'));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.js"), "utf8").includes('document.addEventListener("drop"'));
-assert.ok(!fs.readFileSync(path.join(root, "history.js"), "utf8").includes("chrome.tabs.update(tabId, { active: true })"));
-const popupSource = fs.readFileSync(path.join(root, "popup.js"), "utf8");
+assert.ok(sidePanelSource.includes('document.addEventListener("drop"'));
+assert.ok(sidePanelSource.includes('state.tabBehavior === "keep-current"'));
+assert.ok(sidePanelSource.includes("contextSpoiler"));
+assert.ok(sidePanelSource.includes("row.append(bubble, tools)"));
+assert.ok(sidePanelSource.includes("requestAnimationFrame(() => $(\"input\").focus())"));
+assert.ok(sidePanelSource.includes('wrap.className = "code-wrap"'));
+assert.ok(sidePanelSource.includes("constrainTableColumns(table)"));
+assert.ok(!sidePanelSource.includes('querySelector(".reasoning")?.removeAttribute("open")'));
+assert.ok(sidePanelHtml.includes("flex-wrap:wrap"));
+assert.ok(sidePanelHtml.includes("height:40px;min-height:40px"));
+assert.ok(sidePanelHtml.includes(".message-row{flex:0 0 auto"));
+assert.ok(sidePanelHtml.includes("flex-direction:column;align-items:flex-start"));
+assert.ok(sidePanelHtml.includes(".message-row.user-row{align-items:flex-end}"));
+assert.ok(sidePanelHtml.includes("overflow-anchor:none"));
+assert.ok(themeSource.includes("max-width: 320px"));
+
+assert.ok(read("history.html").includes('id="imageViewer"'));
+assert.ok(read("history.html").includes('id="viewMode"'));
+assert.ok(read("history.html").includes("marked.min.js"));
+assert.ok(read("history.html").includes(".entry,.cell,.conversation,.turn,.markdown{min-width:0;max-width:100%}"));
+assert.ok(historySource.includes("messageImageUrls"));
+assert.ok(historySource.includes("renderAsMarkdown = true"));
+assert.ok(historySource.includes("safeMarkdown(text)"));
+assert.ok(historySource.includes('scroll.className = "table-scroll"'));
+assert.ok(historySource.includes("constrainTableColumns(table)"));
+assert.ok(historySource.includes('action: "DELETE_SAVED_AI_CHATS"'));
+assert.ok(!historySource.includes("chrome.tabs.update(tabId, { active: true })"));
+
+assert.ok(read("background.js").includes('case "EDIT_AI_MESSAGE"'));
+assert.ok(!read("background.js").includes("CONFIRM_AI_PAGE_OVERFLOW"), "Page overflow is decided in the side panel, not with confirm() on the page");
 assert.ok(popupSource.includes("chrome.sidePanel.open({ tabId: activeTabId })"));
 assert.ok(popupSource.indexOf("chrome.sidePanel.open({ tabId: activeTabId })") < popupSource.indexOf('action: "OPEN_AI_FROM_POPUP"'));
 assert.ok(popupSource.includes('action: "DELETE_SAVED_AI_CHATS"'));
-assert.ok(fs.readFileSync(path.join(root, "history.js"), "utf8").includes('action: "DELETE_SAVED_AI_CHATS"'));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes("flex-wrap:wrap"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.js"), "utf8").includes('state.tabBehavior === "keep-current"'));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.js"), "utf8").includes("contextSpoiler"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes("height:34px;min-height:34px"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes(".message-row{flex:0 0 auto"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes("flex-direction:column;align-items:flex-start"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes(".message-row.user-row{align-items:flex-end}"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.js"), "utf8").includes("row.append(bubble, tools)"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.js"), "utf8").includes("requestAnimationFrame(() => $(\"input\").focus())"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes("overflow-anchor:none"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.js"), "utf8").includes('wrap.className = "code-wrap"'));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes("padding-top:25px"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes("width:21px;height:21px"));
-assert.ok(fs.readFileSync(path.join(root, "popup.html"), "utf8").includes("scrollbar-color:#56657d transparent"));
-assert.ok(fs.readFileSync(path.join(root, "popup.html"), "utf8").includes("body.light footer a"));
-assert.ok(!fs.readFileSync(path.join(root, "sidepanel.js"), "utf8").includes('querySelector(".reasoning")?.removeAttribute("open")'));
-assert.ok(sidePanelSource.includes("constrainTableColumns(table)"));
-assert.ok(contentSource.includes("constrainTableColumns(table)"));
-assert.ok(fs.readFileSync(path.join(root, "history.js"), "utf8").includes("constrainTableColumns(table)"));
-assert.ok(fs.readFileSync(path.join(root, "sidepanel.html"), "utf8").includes("max-width:320px"));
+assert.ok(!/<a\b(?![^>]*href)/.test(read("popup.html")), "Popup links must be focusable buttons");
 
 console.log("Smoke checks passed");
