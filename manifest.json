@@ -1,24 +1,46 @@
 {
   "manifest_version": 3,
   "name": "AI Text Tools",
-  "version": "5.0",
-  "permissions": ["contextMenus", "storage", "activeTab", "scripting"],
+  "description": "Быстрые AI-запросы по выделению, странице и изображениям с потоковым ответом.",
+  "version": "6.7.7",
+  "permissions": ["contextMenus", "storage", "activeTab", "scripting", "sidePanel", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
   "options_page": "options.html",
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "action": {
+    "default_popup": "popup.html",
+    "default_title": "AI Text Tools",
     "default_icon": {
       "16": "icon16.png",
       "48": "icon48.png",
       "128": "icon128.png"
     }
   },
-  "web_accessible_resources": [
+  "commands": {
+    "ask-ai": {
+      "suggested_key": { "default": "Ctrl+Space", "mac": "Command+Space" },
+      "description": "Задать вопрос AI"
+    },
+    "ask-page": {
+      "suggested_key": { "default": "Alt+Shift+A" },
+      "description": "Задать вопрос по открытой странице"
+    },
+    "summarize-page": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Суммаризировать открытую страницу"
+    }
+  },
+  "content_scripts": [
     {
-      "resources": ["marked.min.js"],
-      "matches": ["<all_urls>"]
+      "matches": ["<all_urls>"],
+      "js": ["marked.min.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
     }
   ],
   "icons": {

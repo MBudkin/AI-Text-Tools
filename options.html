@@ -1,128 +1,83 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <title>Настройки AI Text Tools</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Настройки · AI Text Tools</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    label, input, select, textarea, button { display: block; margin: 10px 0; }
-    input[type="text"], input[type="password"], textarea { width: 400px; padding: 5px; }
-    textarea#globalPrompt { height: 60px; }
-    #menu-items { margin-top: 20px; }
-    #menu-items label { font-weight: bold; margin-top: 20px; }
-    .menu-item { display: flex; align-items: center; margin-bottom: 10px; }
-    .menu-item input[type="text"], .menu-item textarea { margin-right: 10px; }
-    .menu-item .title-input { flex: 1; }
-    .menu-item .prompt-input { flex: 2; }
-    .menu-item .model-input { flex: 1; }
-    .menu-item button { margin-left: 5px; }
-    #import-section { margin-top: 20px; }
-    .move-buttons { display: flex; flex-direction: column; }
-    .move-buttons button {
-      padding: 2px 5px;
-      margin-bottom: 2px;
-      cursor: pointer;
-      font-size: 12px;
-    }
-    #history-link {
-      margin-top: 20px;
-    }
-    #history-link a {
-      color: #1e90ff;
-      text-decoration: none;
-    }
-    #history-link a:hover {
-      text-decoration: underline;
-    }
-    /* Стили для нового раздела настроек истории */
-    #history-settings {
-      margin-top: 20px;
-    }
-    #history-settings label {
-      font-weight: bold;
-      margin-bottom: 5px;
-    }
-    #history-settings input[type="number"] {
-      width: 100px;
-      padding: 5px;
-      font-size: 14px;
-    }
+    :root { color-scheme: dark; --bg:#0d121b; --card:#151c28; --line:#2c3749; --text:#ebf0f8; --muted:#95a3b8; --accent:#7667ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: radial-gradient(circle at 20% 0,#17213b 0,transparent 35%),var(--bg); font: 14px/1.55 Inter,ui-sans-serif,system-ui,sans-serif; }
+    .layout { display: grid; grid-template-columns: 230px minmax(0,900px); gap: 28px; max-width: 1200px; margin: auto; padding: 28px; }
+    aside { position: sticky; top: 24px; align-self: start; }
+    .brand { display:flex; align-items:center; gap:11px; margin-bottom:22px; } .brand img{width:38px;height:38px}.brand h1{margin:0;font-size:17px}.version{color:var(--muted);font-size:11px}
+    nav { display:grid; gap:4px; } nav a { padding:8px 10px; border-radius:8px; color:#b8c3d5; text-decoration:none; } nav a:hover{color:#fff;background:#1b2535}
+    main { min-width:0; } section { margin-bottom:20px; padding:22px; border:1px solid var(--line); border-radius:16px; background:rgba(21,28,40,.94); box-shadow:0 15px 40px rgba(0,0,0,.18); }
+    h2 { margin:0 0 5px; font-size:18px; } h3{margin:0;font-size:14px}.lead{margin:0 0 18px;color:var(--muted)}
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }.full{grid-column:1/-1}
+    label { display:block; color:#b7c2d4; font-size:12px; font-weight:650; }.help{display:block;margin-top:5px;color:#77859a;font-size:11px;font-weight:400}
+    input,textarea,select { width:100%; margin-top:6px; border:1px solid #354159; border-radius:9px; outline:0; color:var(--text); background:#0c121b; font:inherit; }
+    input,select{height:40px;padding:0 11px}textarea{min-height:100px;padding:10px 11px;resize:vertical;line-height:1.5;white-space:pre-wrap}
+    input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(118,103,255,.15)}
+    input[type=checkbox]{width:17px;height:17px;margin:0;accent-color:var(--accent)}.check{display:flex;align-items:flex-start;gap:9px;color:#c6d0df;font-size:13px}.check span{flex:1}
+    button,.button { display:inline-flex; align-items:center; justify-content:center; min-height:38px; padding:0 14px; border:1px solid #39465d; border-radius:9px; cursor:pointer; color:#dce4f1; background:#1b2534; font:inherit; text-decoration:none; }
+    button:hover,.button:hover{background:#27344a}.primary{border:0;color:#fff;background:linear-gradient(135deg,#765cff,#4b6eff);font-weight:700}.primary:hover{filter:brightness(1.08)}.danger{color:#ffcbd1;background:#3c2028}
+    .toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.toolbar-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .prompt-list{display:grid;gap:12px;margin-top:16px}.prompt-card{padding:15px;border:1px solid #303c51;border-radius:12px;background:#111824}.prompt-head{display:flex;align-items:center;gap:8px}.prompt-head input{margin:0;font-weight:700}.prompt-actions{display:flex;gap:5px}.prompt-actions button{min-width:35px;padding:0 9px}.prompt-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(180px,1fr);gap:12px;margin-top:10px}.prompt-grid textarea{min-height:112px;margin:0}.stack{display:grid;gap:8px}.stack input,.stack select{margin:0}
+    code { padding:2px 5px; border-radius:5px; color:#bfc6ff; background:#0b1018; }.tokens{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.info{padding:12px;border:1px solid #2f3b50;border-radius:10px;background:#111824}.info strong{display:block;margin-bottom:3px}.info span{color:var(--muted);font-size:12px}
+    #savebar{position:sticky;bottom:12px;z-index:2;display:flex;align-items:center;justify-content:space-between;margin-top:18px;padding:12px 14px;border:1px solid #3b4860;border-radius:12px;background:rgba(18,25,36,.94);backdrop-filter:blur(10px)}#status{color:#9cafc8;font-size:12px}#status.ok{color:#81d8a0}#status.error{color:#ff9eaa}.model-loader{display:flex;flex-direction:column;justify-content:flex-end;gap:6px}.model-loader button{width:100%;height:40px}
+    @media(max-width:800px){.layout{display:block;padding:15px}aside{position:static;margin-bottom:20px}nav{display:flex;overflow:auto}.grid,.prompt-grid,.info-grid{grid-template-columns:1fr}section{padding:16px}}
   </style>
 </head>
-
 <body>
+  <div class="layout">
+    <aside><div class="brand"><img src="icon48.png" alt=""><div><h1>AI Text Tools</h1><div class="version">Версия 6.7.2 · Manifest V3</div></div></div><nav>
+      <a href="#connection">Подключение</a><a href="#behavior">Модели и поведение</a><a href="#prompts">Промпты</a><a href="#page">Страница и кэш</a><a href="#about">Возможности</a><a href="history.html" target="_blank">История ↗</a>
+    </nav></aside>
+    <main>
+      <section id="connection"><h2>Подключение API</h2><p class="lead">OpenRouter с расширенной интеграцией или другой совместимый с OpenAI Chat Completions API.</p><div class="grid">
+        <label>Провайдер<select id="apiProvider"><option value="openrouter">OpenRouter</option><option value="custom">Другой OpenAI-совместимый API</option></select></label>
+        <label>Адрес API<input id="apiServer" type="url" placeholder="https://openrouter.ai/api/v1"></label>
+        <label>API-ключ<input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-…"></label>
+        <div class="model-loader"><span class="help" id="modelsStatus">Каталог моделей ещё не загружен.</span><button id="loadModels" type="button">Обновить модели и цены</button></div>
+      </div></section>
 
-  <!-- Секция для ссылки на историю запросов -->
-  <div id="history-link">
-    <h1>История запросов</h1>
-    <p>
-      <a href="history.html" target="_blank">Просмотреть последние запросы и ответы</a>
-    </p>
-  </div>
+      <section id="behavior"><h2>Модели и поведение</h2><p class="lead">Отдельные значения для готовых промптов и свободного вопроса без контекста.</p><div class="grid">
+        <label>Модель промптов по умолчанию<input id="defaultPromptModel" list="recentModels" placeholder="openrouter/auto"><span class="help" id="defaultModelInfo">Используется готовыми пунктами меню без собственной модели.</span></label>
+        <label>Reasoning промптов по умолчанию<select id="defaultThinking"></select></label>
+        <label>Модель свободного запроса<input id="quickModel" list="recentModels" placeholder="openrouter/auto"><span class="help" id="quickModelInfo">Для основного окна, страницы и продолжения диалога.</span></label>
+        <label>Reasoning свободного запроса<select id="quickThinking"></select></label>
+        <label>Custom budget промптов<input id="defaultReasoningMaxTokens" type="number" min="1" max="128000" step="100"><span class="help">Максимум токенов на рассуждение для готовых промптов. Используется только при Reasoning → Custom; большее значение может увеличить время и стоимость запроса.</span></label>
+        <label>Custom budget свободного запроса<input id="quickReasoningMaxTokens" type="number" min="1" max="128000" step="100"><span class="help">Максимум токенов на рассуждение для обычных вопросов, страницы и чата. Для Нет/Low/Medium/High это поле игнорируется.</span></label>
+        <label class="full">Системный промпт<textarea id="systemPrompt" rows="5" placeholder="Инструкции для модели. Поддерживаются {{date}} и {{time}}."></textarea><span class="help">Отправляется как system message. Переносы строк сохраняются без преобразований.</span></label>
+      </div><datalist id="recentModels"></datalist></section>
 
-  <h1>Настройки</h1>
-  
-  <p>Здесь вы можете настроить параметры работы расширения и управлять пунктами контекстного меню.</p>
-  
-  <label for="apiServer">Сервер API OpenAI (или совместимый):</label>
-  <input id="apiServer" type="text" placeholder="https://api.openai.com/v1" />
-  
-  <label for="apiKey">API-ключ:</label>
-  <input id="apiKey" type="password" placeholder="API-ключ" />
-  
-  <label for="apiModel">Модель (по умолчанию):</label>
-  <input id="apiModel" type="text" placeholder="Модель, например, gpt-4o" list="recent-models-list" />
-  <datalist id="recent-models-list"></datalist>
+      <section id="prompts"><div class="toolbar"><div><h2>Готовые промпты</h2><p class="lead">Пункты контекстного меню с индивидуальной моделью и Reasoning.</p></div><button id="addPrompt" type="button">＋ Добавить</button></div><div id="promptList" class="prompt-list"></div></section>
 
-  <label for="systemPrompt">Системный промпт (будет использоваться как system message в API):</label>
-  <textarea id="systemPrompt" placeholder="Введите здесь системный промпт, который будет применяться как system message ко всем запросам... Если пусто - без system prompt."></textarea>
-  
-  <h2>Рекомендации</h2>
-    <p>
-	<b>Рекомендую назначить горячие клавиши в настройках:</b><br>	
-	1) "chrome://extensions/shortcuts" - скопируйте, вставьте в браузер и перейдите по ссылке.<br>
-	2) Установите горячие клавиши на активацию расширения "AI Text Tools" на клавиши "Ctrl + Space".<br>
-	3) Выделите нужный текст на сайте, нажмите "Ctrl + Space" и введите ваш запрос. Текст можно не выделять, тогда запрос будет без контекста.<br>
-	<b>ВНИМАНИЕ!</b> Запросы не работают в настройках расширений и настройках браузера! Это ограничения браузера.<br>
-  <br>
-  <b>В системный промпт и запросы можно вставить следующие "ссылки":</b><br>
-  <code>{{selectionText}}</code> - добавляет выделенный текст в запрос.<br>
-  <code>{{date}}</code> - добавляет текущую дату в запрос.<br>
-  <code>{{time}}</code> - добавляет текущее время в запрос.<br>
-  </p>
-  
-  <h2>Пункты контекстного меню</h2>
-  <p>
-    Чтобы добавить новый пункт контекстного меню, нажмите кнопку "Добавить пункт меню".<br><br>
-    <b>Важно:</b> пункты меню, не содержащие <code>{{selectionText}}</code>, не появятся в контекстном меню.
-    Чтобы обратиться к AI без контекста, нажмите правой кнопкой мыши в свободном месте и выберите пункт "Спросить AI".<br>
-	Так же вы можете нажать на значок расширения или использовать горячие клавиши.<br><br>
-  </p>
-  
-  <div id="menu-items"></div>
-  <button id="add-menu-item">Добавить пункт меню</button>
-  
-  <button id="save">Сохранить</button>
-  
-  <!-- Секция для экспорта и импорта настроек -->
-  <div id="import-section">
-    <h2>Экспорт и импорт настроек</h2>
-    <button id="export">Экспортировать настройки</button>
-    
-    <label for="import-file">Импортировать настройки:</label>
-    <input type="file" id="import-file" accept=".json" />
-    <button id="import">Импортировать</button>
+      <section id="page"><h2>Страница, история и кэш</h2><p class="lead">Настройки суммаризации, продолжения разговора и хранения локальной истории.</p><div class="grid">
+        <label class="full">Промпт суммаризации страницы<textarea id="pageSummaryPrompt" rows="4"></textarea></label>
+        <label>Максимум символов страницы<input id="pageContextLimit" type="number" min="5000" max="200000" step="5000"><span class="help">Навигация и оформление не отправляются; очень длинный текст обрезается.</span></label>
+        <label>Чатов в локальной истории<input id="historyLimit" type="number" min="0" max="1000"><span class="help">0 полностью отключает историю.</span></label>
+        <label>Последних чатов в popup<input id="recentChatsLimit" type="number" min="0" max="20"><span class="help">Не влияет на полную историю.</span></label>
+        <label class="check full"><input id="enableCaching" type="checkbox"><span><strong>Использовать кэш OpenRouter</strong><span class="help">Добавляет стабильный session_id для sticky routing и включает response cache для полностью одинаковых запросов. Продолжение чата сохраняет прежние сообщения, что позволяет совместимым моделям переиспользовать prompt cache.</span></span></label>
+        <label>TTL response cache, секунд<input id="cacheTtl" type="number" min="1" max="86400"><span class="help">По умолчанию 300 секунд. Влияет только на OpenRouter.</span></label>
+        <label>Отправка сообщения<select id="sendOnEnter"><option value="true">Enter отправляет, Shift+Enter — новая строка</option><option value="false">Ctrl+Enter отправляет, Enter — новая строка</option></select></label>
+        <label>Тема<select id="theme"><option value="dark">Тёмная</option><option value="light">Светлая</option><option value="system">Как в системе</option></select></label>
+        <label class="full">Поведение чата при переключении вкладок<select id="sidePanelTabBehavior"><option value="keep-current">Продолжать текущий чат на всех вкладках</option><option value="per-tab">Отдельный чат для каждой вкладки</option></select><span class="help">В первом режиме отправленный чат остаётся в панели при переходе на другие вкладки. Во втором панель показывает чат, привязанный к выбранной вкладке. Новый ещё не отправленный запрос всегда обновляет контекст активной вкладки.</span></label>
+        <label>Ширина отдельного окна, px<input id="chatWindowWidth" type="number" min="420" max="1800" step="10"><span class="help">Начальная ширина при обычной ширине браузера.</span></label>
+        <label>Ширина окна при узком браузере, px<input id="chatWindowCompactWidth" type="number" min="420" max="1200" step="10"><span class="help">Используется, когда основное окно браузера уже 900 px.</span></label>
+        <label class="check full"><input id="rememberChatWindowWidth" type="checkbox"><span><strong>Запоминать изменённую ширину отдельного окна</strong><span class="help">Ручная ширина запоминается отдельно для обычного и узкого окна браузера. Если выключено, всегда используются значения выше.</span></span></label>
+      </div></section>
+
+      <section id="about"><h2>Что доступно</h2><p class="lead">Основные сценарии и шаблоны, которые можно использовать в промптах.</p><div class="info-grid">
+        <div class="info"><strong>Горячие клавиши</strong><span>Открывают Side Panel, подхватывают выделенный текст и сразу фокусируют поле запроса.</span></div><div class="info"><strong>Контекст страницы</strong><span>Показывает объём и обновляется при смене активной вкладки.</span></div><div class="info"><strong>История чатов</strong><span>Диалоги хранятся структурированно; временные чаты не сохраняются.</span></div>
+        <div class="info"><strong>Изображения</strong><span>Выбор файла или вставка картинки из буфера; изображение уменьшается локально.</span></div><div class="info"><strong>Потоковый ответ</strong><span>Ответ и доступное reasoning отображаются раздельно в реальном времени.</span></div><div class="info"><strong>ESC и Стоп</strong><span>Работают только при открытом AI-окне и прерывают сетевой запрос.</span></div>
+      </div><div class="tokens"><code>{{selectionText}}</code><code>{{pageText}}</code><code>{{pageTitle}}</code><code>{{pageUrl}}</code><code>{{date}}</code><code>{{time}}</code></div></section>
+
+      <section><div class="toolbar"><div><h2>Резервная копия</h2><p class="lead">Экспорт и импорт настроек в JSON.</p></div><div class="toolbar-actions"><button id="exportSettings" type="button">Экспорт</button><label class="button">Импорт<input id="importSettings" class="hidden" type="file" accept="application/json,.json" hidden></label></div></div></section>
+      <div id="savebar"><span id="status">Изменения сохраняются только по кнопке.</span><button id="saveSettings" class="primary" type="button">Сохранить настройки</button></div>
+    </main>
   </div>
-  
-  <!-- Секция для настройки количества записей в истории -->
-  <div id="history-settings">
-    <h2>Настройки Истории</h2>
-    <label for="historyLimit">Количество записей в истории (0-1000):</label>
-    <input id="historyLimit" type="number" min="0" max="1000" value="20" />
-    <p>Установите 0 для отключения сохранения истории.</p>
-    <button id="saveHistoryLimit">Сохранить</button>
-  </div>
-   
   <script src="options.js"></script>
 </body>
 </html>

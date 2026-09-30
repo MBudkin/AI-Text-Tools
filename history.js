@@ -1,76 +1,147 @@
-document.addEventListener("DOMContentLoaded", () => {
-  loadHistory();
+let chats = [];
+let targetTabId = null;
+let renderAsMarkdown = true;
+const selectedIds = new Set();
+const container = document.getElementById("history");
+const search = document.getElementById("search");
+const deleteSelected = document.getElementById("deleteSelected");
+const viewMode = document.getElementById("viewMode");
+const imageViewer = document.getElementById("imageViewer");
+const imageViewerImage = document.getElementById("imageViewerImage");
+const imageViewerCaption = document.getElementById("imageViewerCaption");
 
-  document.getElementById("clear-button").addEventListener("click", () => {
-    if (confirm("Вы уверены, что хотите очистить историю запросов?")) {
-      chrome.storage.local.set({ history: [] }, () => { // Очищаем только историю
-        loadHistory();
-        alert("История запросов очищена.");
-      });
-    }
-  });
+document.addEventListener("DOMContentLoaded", init);
+search.addEventListener("input", () => render());
+deleteSelected.addEventListener("click", () => deleteChats([...selectedIds]));
+viewMode.addEventListener("click", async () => {
+  renderAsMarkdown = !renderAsMarkdown;
+  updateViewMode();
+  await chrome.storage.local.set({ historyViewMode: renderAsMarkdown ? "markdown" : "text" });
+  render();
+});
+document.getElementById("imageViewerClose").addEventListener("click", closeImageViewer);
+imageViewer.addEventListener("click", event => { if (event.target === imageViewer) closeImageViewer(); });
+document.addEventListener("keydown", event => { if (event.key === "Escape" && !imageViewer.classList.contains("hidden")) closeImageViewer(); });
+document.getElementById("clear").addEventListener("click", async () => {
+  if (!confirm("Удалить всю локальную историю чатов и запросов?")) return;
+  await deleteChats(chats.map(chat => chat.id), false);
 });
 
-function loadHistory() {
-  chrome.storage.local.get(['history'], (data) => { // Получаем только историю
-    const history = data.history || [];
-    
-    chrome.storage.sync.get(['historyLimit'], (settings) => { // Получаем historyLimit из storage.sync
-      const historyLimit = typeof settings.historyLimit === 'number' ? settings.historyLimit : 20; // По умолчанию 20
-      const tableBody = document.getElementById("history-table-body");
-      tableBody.innerHTML = ""; // Очистка таблицы
-
-      if (historyLimit === 0) {
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.colSpan = 5;
-        cell.textContent = "История отключена.";
-        cell.style.textAlign = "center";
-        row.appendChild(cell);
-        tableBody.appendChild(row);
-        return;
-      }
-
-      if (history.length === 0) {
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.colSpan = 5;
-        cell.textContent = "История пуста.";
-        cell.style.textAlign = "center";
-        row.appendChild(cell);
-        tableBody.appendChild(row);
-        return;
-      }
-
-      history.forEach(entry => {
-        const row = document.createElement("tr");
-
-        const dateCell = document.createElement("td");
-        dateCell.textContent = entry.date;
-        row.appendChild(dateCell);
-
-        const timeCell = document.createElement("td");
-        timeCell.textContent = entry.time;
-        row.appendChild(timeCell);
-
-        const modelCell = document.createElement("td");
-        modelCell.textContent = entry.model || "";
-        row.appendChild(modelCell);
-
-        const queryCell = document.createElement("td");
-        const queryPre = document.createElement("pre");
-        queryPre.textContent = entry.query;
-        queryCell.appendChild(queryPre);
-        row.appendChild(queryCell);
-
-        const responseCell = document.createElement("td");
-        const responsePre = document.createElement("pre");
-        responsePre.textContent = entry.response;
-        responseCell.appendChild(responsePre);
-        row.appendChild(responseCell);
-
-        tableBody.appendChild(row);
-      });
-    });
-  });
+async function init() {
+  const stored = await chrome.storage.local.get("historyViewMode");
+  renderAsMarkdown = stored.historyViewMode !== "text";
+  updateViewMode();
+  await Promise.all([refreshTargetTab(), loadHistory()]);
 }
+
+function updateViewMode() {
+  viewMode.textContent = renderAsMarkdown ? "Текст" : "Markdown";
+  viewMode.title = renderAsMarkdown ? "Показать исходный текст" : "Показать форматированный Markdown";
+  viewMode.setAttribute("aria-label", viewMode.title);
+}
+
+async function loadHistory() {
+  const data = await chrome.storage.local.get(["chats", "history"]);
+  const settings = await chrome.storage.sync.get("historyLimit");
+  chats = data.chats?.length ? data.chats : migrateLegacyHistory(data.history || []);
+  if (settings.historyLimit === 0) chats = [];
+  const availableIds = new Set(chats.map(chat => chat.id));
+  for (const id of selectedIds) if (!availableIds.has(id)) selectedIds.delete(id);
+  render(settings.historyLimit === 0);
+}
+
+function migrateLegacyHistory(history) {
+  return history.map((entry, index) => ({ id: entry.chatId || `legacy-${index}`, title: entry.query?.slice(0, 80) || "Запрос", model: entry.model, updatedAt: entry.timestamp || 0, totalCost: entry.cost || entry.usage?.cost || 0, context: entry.context, messages: [{ role: "user", content: entry.query || "" }, { role: "assistant", content: entry.response || "" }] }));
+}
+
+function render(disabled = false) {
+  const term = search.value.trim().toLowerCase();
+  const filtered = chats.filter(chat => `${chat.title || ""}\n${chat.model || ""}\n${(chat.messages || []).map(message => contentText(message.content)).join("\n")}`.toLowerCase().includes(term));
+  document.getElementById("count").textContent = disabled ? "История отключена в настройках" : `${filtered.length} из ${chats.length} чатов`;
+  container.innerHTML = "";
+  updateSelectionUI();
+  if (!filtered.length) { const empty = document.createElement("div"); empty.className = "empty"; empty.textContent = disabled ? "Сохранение истории отключено." : term ? "Ничего не найдено." : "История чатов пока пуста."; container.appendChild(empty); return; }
+  filtered.forEach(chat => container.appendChild(renderChat(chat)));
+}
+
+function renderChat(chat) {
+  const article = document.createElement("article"); article.className = "entry";
+  const head = document.createElement("div"); head.className = "entry-head";
+  const select = document.createElement("input"); select.type = "checkbox"; select.className = "chat-select"; select.checked = selectedIds.has(chat.id); select.title = "Выбрать чат"; select.setAttribute("aria-label", `Выбрать чат ${chat.title || "Чат"}`); select.addEventListener("change", () => { if (select.checked) selectedIds.add(chat.id); else selectedIds.delete(chat.id); updateSelectionUI(); }); head.appendChild(select);
+  const title = document.createElement("strong"); title.textContent = chat.title || "Чат"; title.style.marginRight = "auto"; head.appendChild(title);
+  addPill(head, chat.model || "Модель не указана"); addPill(head, new Date(chat.updatedAt || Date.now()).toLocaleString("ru-RU")); addPill(head, `$${money(chat.totalCost)}`);
+  const open = document.createElement("button"); open.textContent = "Открыть чат"; open.addEventListener("click", () => openChat(chat.id)); head.appendChild(open);
+  const remove = document.createElement("button"); remove.className = "danger compact-danger"; remove.textContent = "Удалить"; remove.addEventListener("click", () => deleteChats([chat.id])); head.appendChild(remove);
+  const body = document.createElement("div"); body.className = "cell";
+  if (chat.context && chat.context.type !== "none") body.appendChild(contextDetails(chat.context));
+  const messages = document.createElement("div"); messages.className = "conversation";
+  const assistantModels = new Set((chat.messages || []).filter(message => message.role === "assistant").map(message => message.model || chat.model).filter(Boolean));
+  const showResponseModels = assistantModels.size > 1;
+  for (const message of chat.messages || []) {
+    if (message.role === "system") continue;
+    const block = document.createElement("div"); block.className = `turn ${message.role}`;
+    const label = document.createElement("div"); label.className = "label"; label.textContent = message.role === "user" ? "Запрос" : `Ответ AI${message.cost != null || message.usage?.cost != null ? ` · $${money(message.cost ?? message.usage?.cost)}` : ""}${showResponseModels && (message.model || chat.model) ? ` · ${message.model || chat.model}` : ""}`;
+    const messageBody = renderMessage(message.displayText || contentText(message.content)); block.append(label, messageBody);
+    const imageCount = Number(message.imageCount) || countMessageImages(message.content);
+    const imageUrls = messageImageUrls(message);
+    if (message.role === "user" && imageUrls.length) block.append(imageGallery(imageUrls));
+    else if (message.role === "user" && imageCount) { const badge = document.createElement("span"); badge.className = "image-badge"; badge.textContent = `▧ ${imageCount === 1 ? "Изображение" : `Изображения · ${imageCount}`}`; block.append(badge); }
+    messages.appendChild(block);
+  }
+  body.appendChild(messages); article.append(head, body); return article;
+}
+
+function updateSelectionUI() {
+  deleteSelected.disabled = selectedIds.size === 0;
+  deleteSelected.textContent = selectedIds.size ? `Удалить выбранные · ${selectedIds.size}` : "Удалить выбранные";
+}
+
+async function deleteChats(ids, askConfirmation = true) {
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  if (!uniqueIds.length) return;
+  if (askConfirmation && !confirm(`Удалить ${uniqueIds.length === 1 ? "выбранный чат" : `выбранные чаты (${uniqueIds.length})`}?`)) return;
+  const result = await chrome.runtime.sendMessage({ action: "DELETE_SAVED_AI_CHATS", chatIds: uniqueIds });
+  if (!result?.ok) return alert(result?.error || "Не удалось удалить чаты.");
+  uniqueIds.forEach(id => selectedIds.delete(id));
+  await loadHistory();
+}
+
+function contextDetails(context) {
+  const details = document.createElement("details"); const summary = document.createElement("summary"); const pre = document.createElement("pre");
+  const linkCount = context.includeLinks ? context.pageLinks?.length || 0 : 0;
+  summary.textContent = context.type === "page" ? `Контекст страницы · ${(context.pageText || "").length} символов${context.includeLinks ? ` · ссылок ${linkCount}` : ""}` : `Выделенный текст · ${(context.selectionText || "").length} символов`;
+  const links = linkCount ? `\n\nСсылки:\n${context.pageLinks.map(link => `${link.text}: ${link.url}`).join("\n")}` : "";
+  pre.textContent = context.type === "page" ? `${context.pageTitle || ""}\n${context.pageUrl || ""}\n\n${context.pageText || ""}${links}` : context.selectionText || "";
+  details.append(summary, pre); return details;
+}
+
+async function refreshTargetTab() {
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  targetTabId = tabs.find(tab => tab.active)?.id || null;
+}
+
+function openChat(chatId) {
+  if (!targetTabId) return alert("Сначала откройте обычную веб-страницу, на которой можно показать чат.");
+  const tabId = targetTabId;
+  const opening = chrome.sidePanel.open({ tabId }).then(() => null, error => error);
+  (async () => {
+    const response = await chrome.runtime.sendMessage({ action: "OPEN_SAVED_AI_CHAT", chatId, targetTabId: tabId, openInSidePanel: true, panelAlreadyOpen: true });
+    const openingError = await opening;
+    if (openingError) return alert(openingError.message || "Не удалось открыть боковую панель.");
+    if (!response?.ok) return alert(response?.error || "Не удалось открыть чат.");
+  })();
+}
+
+function contentText(content) { return typeof content === "string" ? content : (content || []).filter(part => part.type === "text").map(part => part.text).join("\n"); }
+function renderMessage(text) { if (!renderAsMarkdown) { const pre = document.createElement("pre"); pre.className = "plain-text"; pre.textContent = text; return pre; } const body = document.createElement("div"); body.className = "markdown"; body.innerHTML = safeMarkdown(text); body.querySelectorAll("table").forEach(table => { if (table.parentElement?.classList.contains("table-scroll")) return; constrainTableColumns(table); const scroll = document.createElement("div"); scroll.className = "table-scroll"; table.replaceWith(scroll); scroll.append(table); }); return body; }
+function constrainTableColumns(table) { table.querySelectorAll("th,td").forEach(cell => { if (cell.children.length === 1 && cell.firstElementChild?.classList.contains("table-cell-content")) return; const content = document.createElement("div"); content.className = "table-cell-content"; while (cell.firstChild) content.append(cell.firstChild); cell.append(content); }); }
+function safeMarkdown(text) { const template = document.createElement("template"); template.innerHTML = marked.parse(normalizeMathSource(text)); template.content.querySelectorAll("script,style,iframe,object,embed,form,input,button").forEach(node => node.remove()); template.content.querySelectorAll("*").forEach(node => { [...node.attributes].forEach(attr => { if (attr.name.startsWith("on") || /javascript:/i.test(attr.value)) node.removeAttribute(attr.name); }); if (node.tagName === "A") { const href = node.getAttribute("href") || ""; try { const url = new URL(href); if (!["http:", "https:"].includes(url.protocol)) throw new Error("Unsupported link protocol"); node.href = url.href; node.target = "_blank"; node.rel = "noopener noreferrer"; } catch { node.removeAttribute("href"); node.removeAttribute("target"); node.removeAttribute("rel"); } } }); if (typeof renderMathInElement === "function") renderMathInElement(template.content, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "\\[", right: "\\]", display: true }, { left: "\\(", right: "\\)", display: false }, { left: "$", right: "$", display: false }], ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"], throwOnError: false, strict: "ignore" }); return template.innerHTML; }
+function normalizeMathSource(value = "") { let text = String(value).replace(/\\\[([\s\S]*?)\\\]/g, (_match, expression) => `\n$$\n${expression.trim()}\n$$\n`).replace(/\\\(([\s\S]*?)\\\)/g, (_match, expression) => `$${expression.trim()}$`); text = text.replace(/(^|\n)\s*\[\s*([^\]\n]+?)\s*\]\s*(?=\n|$)/g, (match, prefix, expression) => looksLikeMath(expression) ? `${prefix}$$\n${expression.trim()}\n$$` : match); return text; }
+function looksLikeMath(expression) { return /[=^_]|\\(?:frac|sqrt|pm|sum|prod|int|lim|alpha|beta|gamma|theta|pi|infty)\b|(?:\d|\b[A-Za-z]\b)\s*[+*/-]/.test(expression); }
+function countMessageImages(content) { return Array.isArray(content) ? content.filter(part => part.type === "image_url" || (part.type === "text" && /^\[Изображение было приложено/.test(part.text || ""))).length : 0; }
+function messageImageUrls(message = {}) { const originals = Array.isArray(message.content) ? message.content.filter(part => part?.type === "image_url").map(part => part.image_url?.url).filter(Boolean) : []; const previews = Array.isArray(message.imagePreviews) ? message.imagePreviews.filter(Boolean) : []; return originals.length ? originals : previews; }
+function imageGallery(urls) { const gallery = document.createElement("div"); gallery.className = "message-images"; urls.forEach((url, index) => { const button = document.createElement("button"); button.type = "button"; button.className = "message-image"; button.title = "Открыть изображение"; const image = document.createElement("img"); image.src = url; image.alt = `Прикреплённое изображение ${index + 1}`; button.append(image); button.addEventListener("click", () => openImageViewer(url, image.alt)); gallery.append(button); }); return gallery; }
+function openImageViewer(url, caption) { imageViewerImage.src = url; imageViewerCaption.textContent = caption || "Прикреплённое изображение"; imageViewer.classList.remove("hidden"); document.getElementById("imageViewerClose").focus(); }
+function closeImageViewer() { imageViewer.classList.add("hidden"); imageViewerImage.removeAttribute("src"); }
+function money(value) { const number = Number(value) || 0, absolute = Math.abs(number); if (!absolute || absolute >= .01) return number.toFixed(2); return number.toFixed(Math.min(8, Math.max(2, Math.ceil(-Math.log10(absolute)) + 1))); }
+function addPill(parent, text) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = text; parent.appendChild(pill); }

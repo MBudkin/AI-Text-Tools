@@ -1,292 +1,235 @@
+const DEFAULTS = {
+  apiServer: "https://openrouter.ai/api/v1",
+  apiProvider: "openrouter",
+  apiModel: "openrouter/auto",
+  defaultPromptModel: "openrouter/auto",
+  quickModel: "openrouter/auto",
+  systemPrompt: "Ты полезный AI-ассистент. Сегодня {{date}}, текущее время {{time}}.",
+  defaultThinking: "none",
+  quickThinking: "none",
+  defaultReasoningMaxTokens: 2000,
+  quickReasoningMaxTokens: 2000,
+  chatWindowWidth: 760,
+  chatWindowCompactWidth: 560,
+  rememberChatWindowWidth: false,
+  sidePanelTabBehavior: "keep-current",
+  pageSummaryPrompt: "Сделай структурированное резюме открытой страницы. Выдели главные идеи, важные факты и практические выводы.",
+  pageContextLimit: 60000,
+  enableCaching: true,
+  cacheTtl: 300,
+  historyLimit: 50,
+  recentChatsLimit: 6,
+  sendOnEnter: true,
+  theme: "dark",
+  menuItems: []
+};
+
 let menuItems = [];
+let recentModels = [];
+let modelCatalog = [];
+const ids = ["apiProvider", "apiServer", "apiKey", "defaultPromptModel", "quickModel", "systemPrompt", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme"];
+const byId = id => document.getElementById(id);
 
-document.addEventListener("DOMContentLoaded", () => {
-  // Загрузка всех настроек
-  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit", "systemPrompt", "recentModels"], (settings) => {
-    document.getElementById("apiKey").value = settings.apiKey || "";
-    document.getElementById("apiServer").value = settings.apiServer || "https://api.openai.com/v1";
-    document.getElementById("apiModel").value = settings.apiModel || "gpt-4";
-    document.getElementById("systemPrompt").value = settings.systemPrompt || "";
+document.addEventListener("DOMContentLoaded", loadSettings);
 
-    menuItems = settings.menuItems || [];
-    displayMenuItems();
+async function loadSettings() {
+  const stored = await chrome.storage.sync.get(null);
+  const settings = { ...DEFAULTS, ...stored };
+  settings.defaultThinking = migrateReasoning(settings.defaultThinking);
+  settings.quickThinking = migrateReasoning(settings.quickThinking);
+  setReasoningOptions(byId("defaultThinking"), null, settings.defaultThinking);
+  setReasoningOptions(byId("quickThinking"), null, settings.quickThinking);
+  settings.defaultPromptModel ||= stored.apiModel || DEFAULTS.defaultPromptModel;
+  settings.quickModel ||= stored.apiModel || DEFAULTS.quickModel;
+  for (const id of ids) {
+    const element = byId(id);
+    if (element.type === "checkbox") element.checked = Boolean(settings[id]);
+    else if (id === "sendOnEnter") element.value = String(settings[id] !== false);
+    else element.value = settings[id] ?? "";
+  }
+  menuItems = Array.isArray(settings.menuItems) ? settings.menuItems.map(item => ({ ...item })) : [];
+  recentModels = settings.recentModels || [];
+  const catalogData = await chrome.storage.local.get(["openRouterModels", "openRouterModelsUpdatedAt"]);
+  modelCatalog = catalogData.openRouterModels || [];
+  if (modelCatalog.length) byId("modelsStatus").textContent = `${modelCatalog.length} моделей · обновлено ${new Date(catalogData.openRouterModelsUpdatedAt || Date.now()).toLocaleString("ru-RU")}`;
+  renderRecentModels();
+  renderPrompts();
+  updateProviderUI();
+  updateModelCapabilities();
+  if (settings.apiProvider === "openrouter" && settings.apiKey && !modelCatalog.length) setTimeout(() => byId("loadModels").click(), 0);
+}
 
-    const historyLimitInput = document.getElementById("historyLimit");
-    historyLimitInput.value = typeof settings.historyLimit === "number" ? settings.historyLimit : 20;
+function renderRecentModels() {
+  const models = modelCatalog.length ? modelCatalog : recentModels.map(id => ({ id, name: id, pricing: {}, input_modalities: [] }));
+  byId("recentModels").innerHTML = models.map(model => `<option value="${escapeAttribute(model.id)}" label="${escapeAttribute(modelOptionLabel(model))}"></option>`).join("");
+}
 
-    // Загрузка и отображение последних моделей
-    const recentModelsList = document.getElementById("recent-models-list");
-    const recentModels = settings.recentModels || [];
-    recentModels.forEach(model => {
-      const option = document.createElement("option");
-      option.value = model;
-      recentModelsList.appendChild(option);
-    });
-  });
+function modelOptionLabel(model) {
+  const prompt = Number(model.pricing?.prompt || 0) * 1_000_000;
+  const completion = Number(model.pricing?.completion || 0) * 1_000_000;
+  const flags = [model.input_modalities?.includes("image") ? "изображения" : "", model.reasoning?.mandatory ? "reasoning обязателен" : model.supported_parameters?.includes("reasoning") ? "reasoning" : ""].filter(Boolean).join(", ");
+  return `${model.name || model.id} · $${prompt.toFixed(2)}/$${completion.toFixed(2)} за 1M${flags ? ` · ${flags}` : ""}`;
+}
+
+function updateProviderUI() {
+  const openRouter = byId("apiProvider").value === "openrouter";
+  byId("loadModels").style.display = openRouter ? "inline-flex" : "none";
+  if (openRouter && (!byId("apiServer").value || byId("apiServer").value.includes("openrouter.ai"))) byId("apiServer").value = "https://openrouter.ai/api/v1";
+}
+
+function updateModelCapabilities() {
+  updateModelCapability("defaultPromptModel", "defaultThinking", "defaultModelInfo");
+  updateModelCapability("quickModel", "quickThinking", "quickModelInfo");
+}
+
+function updateModelCapability(inputId, thinkingId, infoId) {
+  const model = modelCatalog.find(item => item.id === byId(inputId).value.trim());
+  if (!model) return;
+  const thinking = byId(thinkingId);
+  const mandatory = Boolean(model.reasoning?.mandatory);
+  const supported = mandatory || model.supported_parameters?.includes("reasoning") || Boolean(model.reasoning);
+  setReasoningOptions(thinking, model, thinking.value);
+  const input = model.input_modalities?.includes("image") ? "поддерживает изображения" : "только текст";
+  byId(infoId).textContent = `${model.name || model.id} · ${input} · ${mandatory ? "reasoning обязателен" : supported ? "reasoning доступен" : "без reasoning"}`;
+}
+
+function migrateReasoning(value) { return value === "on" ? "medium" : value === "off" || !value ? "none" : value; }
+function setReasoningOptions(select, model, current = "none") {
+  const mandatory = Boolean(model?.reasoning?.mandatory);
+  const supported = !model || mandatory || model.supported_parameters?.includes("reasoning") || Boolean(model.reasoning);
+  let efforts = Array.isArray(model?.reasoning?.supported_efforts) && model.reasoning.supported_efforts.length ? model.reasoning.supported_efforts : ["low", "medium", "high"];
+  if (!supported) efforts = [];
+  const values = [...(!mandatory ? ["none"] : []), ...efforts, ...(supported && model?.reasoning?.supports_max_tokens !== false ? ["custom"] : [])];
+  const labels = { none: "Нет", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max", custom: "Custom" };
+  select.innerHTML = [...new Set(values)].map(value => `<option value="${value}">${labels[value] || value}</option>`).join("");
+  const migrated = migrateReasoning(current);
+  select.value = values.includes(migrated) ? migrated : (model?.reasoning?.default_effort && values.includes(model.reasoning.default_effort) ? model.reasoning.default_effort : values[0] || "none");
+}
+
+byId("apiProvider").addEventListener("change", updateProviderUI);
+byId("defaultPromptModel").addEventListener("change", updateModelCapabilities);
+byId("quickModel").addEventListener("change", updateModelCapabilities);
+byId("loadModels").addEventListener("click", async () => {
+  try {
+    byId("modelsStatus").textContent = "Загружаем каталог…";
+    const result = await chrome.runtime.sendMessage({ action: "FETCH_OPENROUTER_MODELS", apiServer: byId("apiServer").value.trim(), apiKey: byId("apiKey").value.trim() });
+    if (!result?.ok) throw new Error(result?.error || "Неизвестная ошибка");
+    modelCatalog = result.models; renderRecentModels(); renderPrompts(); updateModelCapabilities();
+    byId("modelsStatus").textContent = `${modelCatalog.length} моделей загружено.`;
+  } catch (error) { byId("modelsStatus").textContent = error.message; }
 });
 
-function displayMenuItems() {
-  const menuItemsContainer = document.getElementById("menu-items");
-  menuItemsContainer.innerHTML = ""; // Очистка существующих пунктов
-
+function renderPrompts() {
+  const list = byId("promptList");
+  list.innerHTML = "";
+  if (!menuItems.length) list.innerHTML = '<div class="lead">Промптов пока нет. Добавьте первый пункт.</div>';
   menuItems.forEach((item, index) => {
-    const itemDiv = document.createElement("div");
-    itemDiv.className = "menu-item";
-
-    const titleInput = document.createElement("input");
-    titleInput.type = "text";
-    titleInput.placeholder = "Название пункта меню";
-    titleInput.value = item.title;
-    titleInput.className = "title-input";
-    titleInput.addEventListener("input", () => {
-      item.title = titleInput.value;
-    });
-
-    const promptInput = document.createElement("textarea");
-    promptInput.placeholder = "Промпт для этого пункта меню";
-    promptInput.value = item.prompt;
-    promptInput.rows = 2;
-    promptInput.className = "prompt-input";
-    promptInput.addEventListener("input", () => {
-      item.prompt = promptInput.value;
-    });
-
-    const modelInput = document.createElement("input");
-    modelInput.type = "text";
-    modelInput.placeholder = "Модель (по умолч. из настроек)";
-    modelInput.value = item.model || "";
-    modelInput.className = "model-input";
-    modelInput.addEventListener("input", () => {
+    const card = document.createElement("article");
+    card.className = "prompt-card";
+    card.innerHTML = `<div class="prompt-head"><input class="title" type="text" aria-label="Название" placeholder="Название пункта" value="${escapeAttribute(item.title || "")}"><div class="prompt-actions"><button type="button" data-up title="Выше" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-down title="Ниже" ${index === menuItems.length - 1 ? "disabled" : ""}>↓</button><button type="button" class="danger" data-delete title="Удалить">×</button></div></div>
+      <div class="prompt-grid"><textarea class="prompt" aria-label="Текст промпта" placeholder="Инструкция модели">${escapeHtml(item.prompt || "")}</textarea><div class="stack"><input class="model" type="text" list="recentModels" placeholder="Модель по умолчанию" value="${escapeAttribute(item.model || "")}"><select class="thinking"></select><input class="reasoning-budget" type="number" min="1" max="128000" step="100" value="${Number(item.reasoningMaxTokens) || 2000}" title="Custom reasoning budget"><span class="help">Пустая модель использует модель промптов по умолчанию.</span></div></div>`;
+    card.querySelector(".title").addEventListener("input", event => item.title = event.target.value);
+    card.querySelector(".prompt").addEventListener("input", event => item.prompt = event.target.value);
+    const modelInput = card.querySelector(".model");
+    const thinkingSelect = card.querySelector(".thinking");
+    setReasoningOptions(thinkingSelect, null, item.thinking === "default" ? "none" : item.thinking);
+    const defaultOption = document.createElement("option"); defaultOption.value = "default"; defaultOption.textContent = "По умолчанию"; thinkingSelect.prepend(defaultOption); thinkingSelect.value = item.thinking || "default";
+    const applyCapability = () => {
       item.model = modelInput.value;
-    });
-
-    const moveButtonsDiv = document.createElement("div");
-    moveButtonsDiv.className = "move-buttons";
-
-    const moveUpButton = document.createElement("button");
-    moveUpButton.textContent = "▲";
-    moveUpButton.title = "Переместить вверх";
-    moveUpButton.disabled = index === 0; // Отключить кнопку, если первый элемент
-    moveUpButton.addEventListener("click", () => {
-      moveMenuItem(index, index - 1);
-    });
-
-    const moveDownButton = document.createElement("button");
-    moveDownButton.textContent = "▼";
-    moveDownButton.title = "Переместить вниз";
-    moveDownButton.disabled = index === menuItems.length - 1; // Отключить кнопку, если последний элемент
-    moveDownButton.addEventListener("click", () => {
-      moveMenuItem(index, index + 1);
-    });
-
-    moveButtonsDiv.appendChild(moveUpButton);
-    moveButtonsDiv.appendChild(moveDownButton);
-
-    const deleteButton = document.createElement("button");
-    deleteButton.textContent = "Удалить";
-    deleteButton.addEventListener("click", () => {
-      menuItems.splice(index, 1);
-      displayMenuItems();
-    });
-
-    itemDiv.appendChild(titleInput);
-    itemDiv.appendChild(promptInput);
-    itemDiv.appendChild(modelInput);
-    itemDiv.appendChild(moveButtonsDiv);
-    itemDiv.appendChild(deleteButton);
-
-    menuItemsContainer.appendChild(itemDiv);
+      const model = modelCatalog.find(entry => entry.id === item.model.trim());
+      if (!model) return;
+      const mandatory = Boolean(model.reasoning?.mandatory), supported = mandatory || model.supported_parameters?.includes("reasoning") || Boolean(model.reasoning);
+      if (model) { const current = thinkingSelect.value; setReasoningOptions(thinkingSelect, model, current); const defaultOption = document.createElement("option"); defaultOption.value="default"; defaultOption.textContent="По умолчанию"; thinkingSelect.prepend(defaultOption); if(current==="default")thinkingSelect.value="default"; item.thinking=thinkingSelect.value; }
+    };
+    modelInput.addEventListener("change", applyCapability);
+    applyCapability();
+    thinkingSelect.addEventListener("change", event => item.thinking = event.target.value);
+    card.querySelector(".reasoning-budget").addEventListener("input", event => item.reasoningMaxTokens = Number(event.target.value));
+    card.querySelector("[data-up]").addEventListener("click", () => movePrompt(index, -1));
+    card.querySelector("[data-down]").addEventListener("click", () => movePrompt(index, 1));
+    card.querySelector("[data-delete]").addEventListener("click", () => { menuItems.splice(index, 1); renderPrompts(); markChanged(); });
+    list.appendChild(card);
   });
 }
 
-function moveMenuItem(fromIndex, toIndex) {
-  if (toIndex < 0 || toIndex >= menuItems.length) return; // Проверка границ
-
-  // Обмен элементов
-  [menuItems[fromIndex], menuItems[toIndex]] = [menuItems[toIndex], menuItems[fromIndex]];
-  
-  displayMenuItems(); // Обновить отображение
+function movePrompt(index, delta) {
+  const next = index + delta;
+  if (next < 0 || next >= menuItems.length) return;
+  [menuItems[index], menuItems[next]] = [menuItems[next], menuItems[index]];
+  renderPrompts(); markChanged();
 }
 
-document.getElementById("add-menu-item").addEventListener("click", () => {
-  menuItems.push({ title: "Новый запрос", prompt: 'Ответь на следующий текст: "{{selectionText}}"' });
-  displayMenuItems();
+byId("addPrompt").addEventListener("click", () => {
+  menuItems.push({ title: "Новый промпт", prompt: "Обработай следующий текст:\n\n{{selectionText}}", model: "", thinking: "default" });
+  renderPrompts(); markChanged();
+  document.querySelector(".prompt-card:last-child .title")?.focus();
 });
 
-document.getElementById("save").addEventListener("click", () => {
-  const apiKey = document.getElementById("apiKey").value;
-  const apiServer = document.getElementById("apiServer").value;
-  const apiModel = document.getElementById("apiModel").value;
-  const systemPrompt = document.getElementById("systemPrompt").value;
-  const historyLimit = parseInt(document.getElementById("historyLimit").value, 10);
+document.addEventListener("input", event => { if (!event.target.closest("#savebar")) markChanged(); });
+document.addEventListener("change", event => { if (!event.target.closest("#savebar")) markChanged(); });
 
-  if (isNaN(historyLimit) || historyLimit < 0 || historyLimit > 1000) {
-    alert("Пожалуйста, введите корректное число для количества записей в истории (0-1000).");
-    return;
-  }
-
-  // Сначала обновляем список недавних моделей
-  chrome.storage.sync.get(["recentModels"], (data) => {
-    let recentModels = data.recentModels || [];
-    if (apiModel) {
-      recentModels = recentModels.filter(m => m !== apiModel);
-      recentModels.unshift(apiModel);
-      if (recentModels.length > 5) {
-        recentModels = recentModels.slice(0, 5);
-      }
-    }
-
-    // Затем сохраняем все настройки
-    chrome.storage.sync.set({
-      apiKey,
-      apiServer,
-      apiModel,
-      systemPrompt,
-      menuItems,
-      historyLimit,
-      recentModels
-    }, () => {
-      // Обновляем datalist на странице
-      const recentModelsList = document.getElementById("recent-models-list");
-      recentModelsList.innerHTML = "";
-      recentModels.forEach(model => {
-        const option = document.createElement("option");
-        option.value = model;
-        recentModelsList.appendChild(option);
-      });
-
-      // Отправляем сообщение в background.js для обновления контекстного меню
-      chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error(chrome.runtime.lastError);
-        } else {
-          alert("Настройки сохранены!");
-        }
-      });
-    });
-  });
-});
-
-// Добавляем обработчик для кнопки сохранения лимита истории
-document.getElementById("saveHistoryLimit").addEventListener("click", () => {
-  const apiKey = document.getElementById("apiKey").value;
-  const apiServer = document.getElementById("apiServer").value;
-  const apiModel = document.getElementById("apiModel").value;
-  const systemPrompt = document.getElementById("systemPrompt").value;
-  const historyLimit = parseInt(document.getElementById("historyLimit").value, 10);
-
-  if (isNaN(historyLimit) || historyLimit < 0 || historyLimit > 1000) {
-    alert("Пожалуйста, введите корректное число для количества записей в истории (0-1000).");
-    return;
-  }
-
-  chrome.storage.sync.set({
-    apiKey,
-    apiServer,
-    apiModel,
-    systemPrompt,
-    menuItems,
-    historyLimit
-  }, () => {
-    // Отправляем сообщение в background.js для обновления контекстного меню
-    chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error(chrome.runtime.lastError);
-      } else {
-        alert("Настройки сохранены!");
-      }
-    });
-  });
-});
-
-// Функции экспорта и импорта остаются без изменений
-// ...
-
-// Функция для экспорта настроек
-document.getElementById("export").addEventListener("click", () => {
-  chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "historyLimit", "systemPrompt", "recentModels"], (settings) => {
-    const dataStr = JSON.stringify(settings, null, 2);
-    const blob = new Blob([dataStr], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "ai_text_tools_settings.json";
-    a.click();
-
-    URL.revokeObjectURL(url);
-  });
-});
-
-// Функция для импорта настроек
-document.getElementById("import").addEventListener("click", () => {
-  const fileInput = document.getElementById("import-file");
-  const file = fileInput.files[0];
-
-  if (!file) {
-    alert("Пожалуйста, выберите файл для импорта.");
-    return;
-  }
-
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    try {
-      const importedSettings = JSON.parse(event.target.result);
-      
-      // Валидация импортированных данных
-      if (
-        typeof importedSettings.apiKey !== "undefined" &&
-        typeof importedSettings.apiServer !== "undefined" &&
-        typeof importedSettings.apiModel !== "undefined" &&
-        Array.isArray(importedSettings.menuItems) &&
-        typeof importedSettings.historyLimit === "number" &&
-        importedSettings.historyLimit >= 0 &&
-        importedSettings.historyLimit <= 1000
-        // Не будем строго проверять наличие globalPrompt и recentModels для обратной совместимости
-      ) {
-        chrome.storage.sync.set(importedSettings, () => {
-          // Отправляем сообщение в background.js для обновления контекстного меню
-          chrome.runtime.sendMessage({ action: "updateContextMenu" }, (response) => {
-            if (chrome.runtime.lastError) {
-              console.error(chrome.runtime.lastError);
-              alert("Произошла ошибка при обновлении контекстного меню.");
-            } else {
-              alert("Настройки успешно импортированы!");
-              // Обновляем интерфейс
-              document.getElementById("apiKey").value = importedSettings.apiKey || "";
-              document.getElementById("apiServer").value = importedSettings.apiServer || "https://api.openai.com/v1";
-              document.getElementById("apiModel").value = importedSettings.apiModel || "gpt-4";
-              document.getElementById("systemPrompt").value = importedSettings.systemPrompt || "";
-              
-              menuItems = importedSettings.menuItems || [];
-              displayMenuItems();
-
-              document.getElementById("historyLimit").value = importedSettings.historyLimit || 20;
-
-              const recentModelsList = document.getElementById("recent-models-list");
-              recentModelsList.innerHTML = "";
-              const recentModels = importedSettings.recentModels || [];
-              recentModels.forEach(model => {
-                const option = document.createElement("option");
-                option.value = model;
-                recentModelsList.appendChild(option);
-              });
-            }
-          });
-        });
-      } else {
-        throw new Error("Файл содержит некорректные данные.");
-      }
-    } catch (error) {
-      console.error("Ошибка при импорте настроек:", error);
-      alert("Не удалось импортировать настройки: " + error.message);
-    }
+function collectSettings() {
+  const number = (id, min, max) => {
+    const value = Number(byId(id).value);
+    if (!Number.isFinite(value) || value < min || value > max) throw new Error(`${byId(id).closest("label")?.firstChild?.textContent || id}: допустимо ${min}–${max}.`);
+    return value;
   };
-
-  reader.onerror = () => {
-    console.error("Ошибка чтения файла.");
-    alert("Не удалось прочитать файл.");
+  const defaultPromptModel = byId("defaultPromptModel").value.trim();
+  const quickModel = byId("quickModel").value.trim();
+  if (!byId("apiServer").value.trim()) throw new Error("Укажите адрес API.");
+  if (!defaultPromptModel || !quickModel) throw new Error("Укажите обе модели по умолчанию.");
+  for (const [index, item] of menuItems.entries()) if (!item.title.trim() || !item.prompt.trim()) throw new Error(`Заполните название и текст промпта №${index + 1}.`);
+  return {
+    apiServer: byId("apiServer").value.trim().replace(/\/$/, ""), apiKey: byId("apiKey").value.trim(),
+    apiProvider: byId("apiProvider").value,
+    apiModel: defaultPromptModel, defaultPromptModel, quickModel,
+    systemPrompt: byId("systemPrompt").value,
+    defaultThinking: byId("defaultThinking").value, quickThinking: byId("quickThinking").value,
+    defaultReasoningMaxTokens: number("defaultReasoningMaxTokens", 1, 128000), quickReasoningMaxTokens: number("quickReasoningMaxTokens", 1, 128000),
+    chatWindowWidth: number("chatWindowWidth", 420, 1800), chatWindowCompactWidth: number("chatWindowCompactWidth", 420, 1200), rememberChatWindowWidth: byId("rememberChatWindowWidth").checked,
+    sidePanelTabBehavior: byId("sidePanelTabBehavior").value,
+    pageSummaryPrompt: byId("pageSummaryPrompt").value,
+    pageContextLimit: number("pageContextLimit", 5000, 200000), historyLimit: number("historyLimit", 0, 1000),
+    recentChatsLimit: number("recentChatsLimit", 0, 20),
+    enableCaching: byId("enableCaching").checked, cacheTtl: number("cacheTtl", 1, 86400),
+    sendOnEnter: byId("sendOnEnter").value === "true", theme: byId("theme").value,
+    menuItems: menuItems.map(item => ({ title: item.title, prompt: item.prompt, model: item.model || "", thinking: item.thinking || "default", reasoningMaxTokens: Number(item.reasoningMaxTokens) || 2000 })),
+    recentModels: [...new Set([defaultPromptModel, quickModel, ...menuItems.map(item => item.model).filter(Boolean), ...recentModels])].slice(0, 12)
   };
+}
 
-  reader.readAsText(file);
+byId("saveSettings").addEventListener("click", async () => {
+  try {
+    const settings = collectSettings();
+    await chrome.storage.sync.set(settings);
+    recentModels = settings.recentModels; renderRecentModels();
+    await chrome.runtime.sendMessage({ action: "UPDATE_AI_CONTEXT_MENUS" });
+    setStatus("Настройки сохранены.", "ok");
+  } catch (error) { setStatus(error.message, "error"); }
 });
+
+byId("exportSettings").addEventListener("click", async () => {
+  try {
+    const settings = collectSettings();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" }));
+    const link = Object.assign(document.createElement("a"), { href: url, download: "ai-text-tools-settings.json" });
+    link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) { setStatus(error.message, "error"); }
+});
+
+byId("importSettings").addEventListener("change", async event => {
+  try {
+    const file = event.target.files?.[0]; if (!file) return;
+    const imported = JSON.parse(await file.text());
+    if (!imported || typeof imported !== "object" || !Array.isArray(imported.menuItems)) throw new Error("Некорректный файл настроек.");
+    await chrome.storage.sync.set(imported);
+    await chrome.runtime.sendMessage({ action: "UPDATE_AI_CONTEXT_MENUS" });
+    await loadSettings(); setStatus("Настройки импортированы.", "ok");
+  } catch (error) { setStatus(`Ошибка импорта: ${error.message}`, "error"); }
+  event.target.value = "";
+});
+
+function markChanged() { setStatus("Есть несохранённые изменения.", ""); }
+function setStatus(message, type) { const node = byId("status"); node.textContent = message; node.className = type; }
+function escapeHtml(value) { return String(value).replace(/[&<>]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char]); }
+function escapeAttribute(value) { return escapeHtml(value).replace(/"/g, "&quot;"); }

@@ -1,41 +1,55 @@
-
 <div align="center">
-<img src="icon128.png" alt="icon" width="50px"/>
-<h1 align="center">AI Text Tools</h1>
+  <img src="icon128.png" alt="AI Text Tools" width="64">
+  <h1>AI Text Tools</h1>
+  <p>Быстрые AI-запросы прямо на любой веб-странице.</p>
 </div>
 
-AI Text Tools is a Chrome/Edge extension designed to enhance productivity by offering AI-based context menu options for various text manipulations like translation, summarization, and explanation.
+## Возможности
 
-## Features
-- **Customizable Prompts**: Easily add, edit, or delete context menu items through the settings page.
-- **User-Friendly UI**: A clean and intuitive options page for managing API keys and settings.
+- Единая боковая панель по `Ctrl + Space`: повторная активация создаёт новый быстрый черновик и не дублирует интерфейс.
+- Вопрос без контекста, по выделенному тексту или по всей открытой странице.
+- Быстрая суммаризация страницы из popup, контекстного меню или по `Alt + Shift + S`.
+- Потоковый Markdown-ответ с локальным KaTeX для формул, отдельное компактное отображение Reasoning, альтернативная регенерация и кнопка остановки.
+- Продолжение разговора в боковой панели или отдельном окне с историей сообщений и стабильной OpenRouter-сессией для prompt caching.
+- Несколько изображений из файлов, буфера обмена или drag-and-drop; перед отправкой они уменьшаются локально, показываются по нажатию и отмечаются в сообщениях и истории.
+- Отдельные модели и режим Reasoning для свободных запросов, промптов по умолчанию и каждого готового промпта.
+- Каталог моделей OpenRouter с ценами, модальностями и автоматической совместимостью reasoning.
+- Стоимость каждого ответа и всего чата по данным OpenRouter Usage Accounting.
+- Адаптивная точность стоимости для запросов дешевле одного цента и отметка модели у ответа после её смены.
+- Chrome Side Panel — основной интерфейс: контекст, модель, Reasoning, изображения, новый и временный чат.
+- Горячая клавиша открывает Side Panel, сохраняет выделенный текст и сразу переводит фокус в поле запроса.
+- Выделенный текст обновляется в панели без повторного открытия; недоступный контекст остаётся видимым серым пунктом.
+- Переключение вкладок работает в одном из двух режимов: текущий чат остаётся закреплённым либо каждая вкладка имеет собственный чат.
+- Чат можно перенести из Side Panel в отдельное изменяемое по размеру окно; ширина настраивается и при желании запоминается.
+- Временный чат не записывается в локальную историю; его рабочая сессия удаляется при закрытии панели или отдельного окна.
+- Reasoning поддерживает доступные модели уровни OpenRouter, fallback Нет/Low/Medium/High и Custom token budget.
+- Контекст страницы извлекается из наиболее содержательного контейнера и доступных iframe/shadow DOM; в Side Panel показывается актуальный объём перед отправкой.
+- Структурированная история чатов с исходным контекстом и продолжением сохранённого разговора.
+- Переменные `{{selectionText}}`, `{{pageText}}`, `{{pageTitle}}`, `{{pageUrl}}`, `{{date}}`, `{{time}}`.
+- Компактная раскрываемая настройка модели и Reasoning для следующего ответа прямо в composer.
+- Редактирование любого пользовательского сообщения с сохранением его контекста и заменой последующей ветки диалога.
+- Работа с OpenRouter и OpenAI-совместимыми Chat Completions API.
 
-## Screenshots
-### Main Features
-![Main Features](assets/screenshot1.png)
-### Settings Page
-![Options Page](assets/screenshot2.png)
-### AI Results Popup
-![AI Results Popup](assets/screenshot3.png)
+## Установка
 
-## Installation
-- Open your Chrome browser and navigate to chrome://extensions/.
-- Enable Developer Mode (toggle in the top-right corner).
-- Click on Load unpacked.
-- Select the folder containing the extension files (e.g., the folder you cloned or downloaded).
-- The extension will now appear in your browser's extension list.
+1. Откройте `chrome://extensions/` или `edge://extensions/`.
+2. Включите режим разработчика.
+3. Нажмите «Загрузить распакованное расширение» и выберите эту папку.
+4. Откройте настройки AI Text Tools, укажите адрес API, ключ и модели.
+5. При необходимости назначьте собственные сочетания на `chrome://extensions/shortcuts`.
 
-## Usage
-- Highlight any text on a webpage.
-- Right-click to see the new context menu options provided by the extension.
-- Select an action like "Summarize" or "Translate" to process the text using AI.
+После обновления исходников нажмите «Обновить» на карточке расширения. Уже открытые страницы также лучше перезагрузить один раз, чтобы новый content script был подключён сразу.
 
-## Note
-- Ensure that you configure your API key and model in the extension's options page for it to function properly.
+## Управление
 
-## Language Support
-We appreciate your interest in this plugin! Currently, the plugin is in its initial stage and is available in its current form. However, we recognize the importance of accessibility and usability for users around the world.
+Сочетания клавиш назначаются браузером на странице `chrome://extensions/shortcuts`. Способ отправки сообщения — Enter либо Ctrl+Enter — выбирается в настройках. В Side Panel и отдельном окне `Esc` останавливает текущую генерацию; клавиши, введённые в панели, не передаются открытой странице.
 
-If this plugin gains popularity and receives positive feedback, we will prioritize adding support for multiple languages in future updates. Our goal is to make this tool as user-friendly as possible for everyone.
+## Кэш OpenRouter
 
-Thank you for your understanding and support!
+При включённой настройке расширение передаёт стабильный `session_id` в рамках диалога, чтобы OpenRouter сохранял привязку к провайдеру и повышал вероятность prompt-cache hit. Также включается response cache для полностью одинаковых запросов. Фактическая поддержка и стоимость prompt caching зависят от выбранной модели и провайдера.
+
+## Ограничения
+
+Содержимое служебных страниц браузера (`chrome://`, магазин расширений и некоторые встроенные PDF-просмотрщики) недоступно расширениям. Модель должна поддерживать изображения, если к запросу приложен файл, и Reasoning, если он включён.
+
+KaTeX распространяется по лицензии MIT; копия лицензии находится в `vendor/katex/LICENSE`.

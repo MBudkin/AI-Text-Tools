@@ -1,1175 +1,1022 @@
-let isGenerating = false;
-let currentAbortController = null;
+const DEFAULT_MENU_ITEMS = [
+  { title: "Кратко пересказать", prompt: "Кратко перескажи выделенный текст, сохрани ключевые факты:\n\n{{selectionText}}", model: "", thinking: "default" },
+  { title: "Объяснить", prompt: "Объясни выделенный текст простым языком:\n\n{{selectionText}}", model: "", thinking: "default" },
+  { title: "Перевести", prompt: "Переведи выделенный текст на русский язык. Если текст уже на русском — переведи на английский:\n\n{{selectionText}}", model: "", thinking: "off" }
+];
 
-// Функция для замены плейсхолдеров в промпте
-function replacePlaceholders(prompt, selectionText = '') {
+const DEFAULTS = {
+  apiServer: "https://openrouter.ai/api/v1",
+  apiProvider: "openrouter",
+  apiModel: "openrouter/auto",
+  defaultPromptModel: "openrouter/auto",
+  quickModel: "openrouter/auto",
+  systemPrompt: "Ты полезный AI-ассистент. Сегодня {{date}}, текущее время {{time}}.",
+  defaultThinking: "none",
+  quickThinking: "none",
+  defaultReasoningMaxTokens: 2000,
+  quickReasoningMaxTokens: 2000,
+  chatWindowWidth: 760,
+  chatWindowCompactWidth: 560,
+  rememberChatWindowWidth: false,
+  sidePanelTabBehavior: "keep-current",
+  pageSummaryPrompt: "Сделай структурированное резюме открытой страницы. Выдели главные идеи, важные факты и практические выводы.",
+  pageContextLimit: 60000,
+  enableCaching: true,
+  cacheTtl: 300,
+  historyLimit: 50,
+  recentChatsLimit: 6,
+  sendOnEnter: true,
+  theme: "dark",
+  menuItems: DEFAULT_MENU_ITEMS
+};
+
+const sessions = new Map();
+const activeRequests = new Map();
+const drafts = new Map();
+const activeSurfaces = new Map();
+const temporaryWindows = new Map();
+
+const storageGet = (area, keys) => new Promise(resolve => chrome.storage[area].get(keys, resolve));
+const storageSet = (area, value) => new Promise(resolve => chrome.storage[area].set(value, resolve));
+
+function isOpenRouter(server = "") {
+  try {
+    return new URL(server).hostname.endsWith("openrouter.ai");
+  } catch {
+    return server.includes("openrouter.ai");
+  }
+}
+
+async function getSettings() {
+  const stored = await storageGet("sync", null);
+  const legacyModel = stored.apiModel || DEFAULTS.apiModel;
+  return {
+    ...DEFAULTS,
+    ...stored,
+    apiModel: legacyModel,
+    defaultPromptModel: stored.defaultPromptModel || legacyModel,
+    quickModel: stored.quickModel || legacyModel,
+    menuItems: Array.isArray(stored.menuItems) && stored.menuItems.length ? stored.menuItems : DEFAULT_MENU_ITEMS
+  };
+}
+
+async function getModelCatalog() {
+  const stored = await storageGet("local", ["openRouterModels"]);
+  return Array.isArray(stored.openRouterModels) ? stored.openRouterModels : [];
+}
+
+async function getModelCapability(model) {
+  return (await getModelCatalog()).find(item => item.id === model) || null;
+}
+
+async function fetchOpenRouterModels(credentials = {}) {
+  const settings = await getSettings();
+  const apiServer = (credentials.apiServer || settings.apiServer || DEFAULTS.apiServer).replace(/\/$/, "");
+  const apiKey = credentials.apiKey || settings.apiKey;
+  const response = await fetch(`${apiServer}/models?output_modalities=all`, {
+    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+  });
+  if (!response.ok) throw new Error(`Не удалось загрузить модели OpenRouter: API ${response.status}`);
+  const payload = await response.json();
+  const models = (payload.data || []).map(model => ({
+    id: model.id,
+    name: model.name || model.id,
+    context_length: model.context_length || 0,
+    input_modalities: model.architecture?.input_modalities || [],
+    output_modalities: model.architecture?.output_modalities || [],
+    supported_parameters: model.supported_parameters || [],
+    reasoning: model.reasoning || null,
+    pricing: model.pricing || {}
+  }));
+  await storageSet("local", { openRouterModels: models, openRouterModelsUpdatedAt: Date.now() });
+  return models;
+}
+
+function replacePlaceholders(value = "", context = {}) {
   const now = new Date();
-  const date = now.toLocaleDateString('ru-RU');
-  const time = now.toLocaleTimeString('ru-RU');
-  return prompt
-    .replace(/\{\{date\}\}/g, date)
-    .replace(/\{\{time\}\}/g, time)
-    .replace(/\{\{selectionText\}\}/g, selectionText);
-}
-// Функция для создания пунктов контекстного меню
-function createContextMenuItems(menuItems) {
-  chrome.contextMenus.removeAll(() => {
-    // Добавляем в контекстное меню только те пункты, в промпте которых есть {{selectionText}}
-    menuItems.forEach((item, index) => {
-      if (item.prompt.includes("{{selectionText}}")) {
-        chrome.contextMenus.create({
-          id: `menu-item-${index}`,
-          title: item.title,
-          contexts: ["selection"] // Показывать только при выделенном тексте
-        });
-      }
-    });
-
-    // Добавляем пункт меню "Свой запрос..." для выделенного текста
-    chrome.contextMenus.create({
-      id: "custom-prompt",
-      title: "Свой запрос...",
-      contexts: ["selection"]
-    });
-
-    // Добавляем пункт меню "Спросить AI" при отсутствии выделенного текста
-    chrome.contextMenus.create({
-      id: "ask-ai",
-      title: "Спросить AI",
-      contexts: ["page", "editable"]
-    });
-  });
-}
-
-// При установке расширения
-chrome.runtime.onInstalled.addListener(() => {
-  // Проверяем, есть ли сохраненные пункты меню
-  chrome.storage.sync.get("menuItems", (data) => {
-    if (!data.menuItems || data.menuItems.length === 0) {
-      // Если нет, инициализируем с дефолтными значениями
-      const defaultMenuItems = [
-        { title: "AI-ответ", prompt: 'Ответь на следующий текст: "{{selectionText}}"' },
-        { title: "Пересказать кратко", prompt: 'Сделайте краткое резюме текста: "{{selectionText}}"' },
-        { title: "Объяснить", prompt: 'Объясни текст простым языком: "{{selectionText}}"' },
-        { title: "Перевести", prompt: 'Переведи текст: "{{selectionText}}"' },
-        { title: "Сделать уникальным", prompt: 'Перепиши текст, сделав его уникальным: "{{selectionText}}"' }
-      ];
-      chrome.storage.sync.set({ menuItems: defaultMenuItems }, () => {
-        createContextMenuItems(defaultMenuItems);
-      });
-    } else {
-      createContextMenuItems(data.menuItems);
-    }
-  });
-});
-
-// Обработчик сообщений от других частей расширения
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === "updateContextMenu") {
-    chrome.storage.sync.get("menuItems", (data) => {
-      createContextMenuItems(data.menuItems || []);
-    });
-    sendResponse({ status: "ok" });
-  }
-});
-
-// Обработчик для остановки генерации
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === "stopGeneration") {
-    if (currentAbortController) {
-      currentAbortController.abort();
-    }
-    isGenerating = false;
-    currentAbortController = null;
-    const tabId = sender.tab ? sender.tab.id : null;
-    if (tabId) {
-      removeLoadingIndicator(tabId);
-      chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          const overlay = document.getElementById("ai-result-modal-overlay");
-          if (overlay) {
-            overlay.remove();
-          }
-        }
-      });
-    }
-    sendResponse({ status: "stopped" });
-  }
-  return true; // Для async response если нужно
-});
-
-// Отображение индикатора загрузки с добавлением спинера
-function showLoadingIndicator(tabId) {
-  chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => {
-      const existingIndicator = document.getElementById("ai-loading-indicator");
-      if (!existingIndicator) {
-        const indicator = document.createElement("div");
-        indicator.id = "ai-loading-indicator";
-        indicator.style.position = "fixed";
-        indicator.style.top = "50%";
-        indicator.style.left = "50%";
-        indicator.style.transform = "translate(-50%, -50%)";
-        indicator.style.backgroundColor = "rgba(220, 226, 226, 0.99)"; // Полупрозрачный тёмный фон
-        indicator.style.border = "1px solid #ffffff"; // Белая рамка для контраста
-        indicator.style.padding = "20px 30px";
-        indicator.style.zIndex = 10000;
-        indicator.style.fontFamily = "Arial, sans-serif";
-        indicator.style.fontSize = "16px";
-        indicator.style.color = "#151515"; // Тёмный текст
-        indicator.style.textAlign = "center";
-        indicator.style.minWidth = "250px";
-        indicator.style.minHeight = "60px";
-        indicator.style.boxSizing = "border-box";
-        indicator.style.borderRadius = "8px"; // Закругленные углы
-        indicator.style.display = "flex";
-        indicator.style.alignItems = "center";
-        indicator.style.justifyContent = "center";
-
-        // Кнопка закрытия (крестик)
-        const closeButton = document.createElement("span");
-        closeButton.innerHTML = "&times;";
-        closeButton.style.position = "absolute";
-        closeButton.style.top = "5px";
-        closeButton.style.right = "10px";
-        closeButton.style.cursor = "pointer";
-        closeButton.style.fontSize = "20px";
-        closeButton.style.color = "#151515";
-        closeButton.addEventListener("click", () => {
-          chrome.runtime.sendMessage({action: "stopGeneration"});
-          indicator.remove();
-        });
-
-        // Создание спинера
-        const spinner = document.createElement("div");
-        spinner.style.border = "4px solid rgba(0, 0, 0, 0.1)";
-        spinner.style.width = "24px";
-        spinner.style.height = "24px";
-        spinner.style.borderRadius = "50%";
-        spinner.style.borderLeftColor = "#09f";
-        spinner.style.animation = "spin 1s linear infinite";
-        spinner.style.marginRight = "10px";
-
-        // Добавление анимации спинера
-        const spinnerStyle = document.createElement("style");
-        spinnerStyle.innerHTML = `
-          @keyframes spin {
-            to { transform: rotate(360deg); }
-          }
-        `;
-        document.head.appendChild(spinnerStyle);
-
-        const text = document.createElement("div");
-        text.innerText = "Обрабатывается запрос...";
-
-        indicator.appendChild(closeButton);
-        indicator.appendChild(spinner);
-        indicator.appendChild(text);
-
-        document.body.appendChild(indicator);
-      }
-    }
-  });
-}
-
-// Удаление индикатора загрузки
-function removeLoadingIndicator(tabId) {
-  chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => {
-      const indicator = document.getElementById("ai-loading-indicator");
-      if (indicator) {
-        indicator.remove();
-      }
-    }
-  });
-}
-
-// Функция для добавления кнопки "Копировать" к каждому блоку кода
-function addCopyButtons() {
-  const codeBlocks = document.querySelectorAll("#ai-result-modal pre code");
-  
-  codeBlocks.forEach((codeBlock) => {
-    // Проверяем, есть ли уже кнопка "Копировать"
-    if (codeBlock.parentElement.querySelector(".copy-button")) return;
-    
-    // Создаем кнопку "Копировать"
-    const copyButton = document.createElement("button");
-    copyButton.innerHTML = "📋";
-    copyButton.className = "copy-button";
-    
-    // Оборачиваем блок кода в контейнер с относительным позиционированием
-    const codeContainer = codeBlock.parentElement;
-    codeContainer.style.position = "relative";
-    codeContainer.appendChild(copyButton);
-    
-    // Обработчик клика для копирования кода
-    copyButton.addEventListener("click", () => {
-      const codeText = codeBlock.innerText;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(codeText).then(() => {
-          const originalText = copyButton.innerText;
-          copyButton.innerText = "Скопировано";
-          setTimeout(() => {
-            copyButton.innerText = originalText;
-          }, 1000);
-        }).catch(err => {
-          alert("Ошибка при копировании текста: " + err);
-        });
-      } else {
-        // Резервный метод копирования
-        try {
-          const textarea = document.createElement("textarea");
-          textarea.value = codeText;
-          textarea.style.position = "fixed";
-          textarea.style.top = "-9999px";
-          document.body.appendChild(textarea);
-          textarea.focus();
-          textarea.select();
-          const successful = document.execCommand('copy');
-          document.body.removeChild(textarea);
-          if (successful) {
-            const originalText = copyButton.innerText;
-            copyButton.innerText = "Скопировано";
-            setTimeout(() => {
-              copyButton.innerText = originalText;
-            }, 1000);
-          } else {
-            throw new Error("Не удалось скопировать текст.");
-          }
-        } catch (err) {
-          alert("Ошибка при копировании текста: " + err);
-        }
-      }
-    });
-  });
-}
-
-function displayModal(tabId, message, isError = false) {
-  // Загружаем библиотеку Marked
-  chrome.scripting.executeScript({
-    target: { tabId },
-    files: ['marked.min.js'],
-  }, () => {
-    // После загрузки Marked создаём модальное окно
-    chrome.scripting.executeScript({
-      target: { tabId },
-      func: (content, isError) => {
-        // Удаляем существующее модальное окно, если оно есть
-        const existingModal = document.getElementById("ai-result-modal-overlay");
-        if (existingModal) {
-          existingModal.remove();
-        }
-
-        // Создаём оверлей для модального окна
-        const overlay = document.createElement("div");
-        overlay.id = "ai-result-modal-overlay";
-
-        // Стили для оверлея
-        Object.assign(overlay.style, {
-          position: "fixed",
-          top: "0",
-          left: "0",
-          width: "100vw",
-          height: "100vh",
-          backgroundColor: "rgba(0, 0, 0, 0.5)",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          zIndex: 10000,
-          overflow: "auto"
-        });
-
-        // Создаём модальное окно
-        const modal = document.createElement("div");
-        modal.id = "ai-result-modal";
-
-        // Стили для модального окна
-        Object.assign(modal.style, {
-          backgroundColor: isError ? "rgba(255, 152, 152, 0.98)" : "rgba(220, 226, 226, 0.98)",
-          border: "1px solid #ffffff",
-          padding: "20px",
-          maxWidth: "65vw",
-          maxHeight: "80vh",
-          overflow: "auto",
-          fontFamily: "Arial, sans-serif",
-          fontSize: "14px",
-          color: "#151515",
-          borderRadius: "8px",
-          boxShadow: "0 0 10px rgba(0, 0, 0, 0.5)",
-          position: "relative"
-        });
-
-        // Создаём контейнер для содержимого
-        const contentContainer = document.createElement("div");
-        contentContainer.style.marginBottom = "20px";
-        contentContainer.innerHTML = marked.parse(content);
-
-        // Кнопка "Копировать весь текст"
-        const copyButton = document.createElement("button");
-        copyButton.innerText = "Копировать весь текст";
-        copyButton.style.padding = "5px 10px";
-        copyButton.style.cursor = "pointer";
-        copyButton.style.border = "none";
-        copyButton.style.borderRadius = "4px";
-        copyButton.style.backgroundColor = "#4CAF50";
-        copyButton.style.color = "#ffffff";
-        copyButton.addEventListener("click", () => {
-          // Логика копирования всего текста
-          const clone = contentContainer.cloneNode(true);
-          const buttons = clone.querySelectorAll('.copy-button');
-          buttons.forEach(btn => btn.remove());
-          const textToCopy = clone.innerText;
-
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(textToCopy).then(() => {
-              const originalText = copyButton.innerText;
-              copyButton.innerText = "Скопировано";
-              setTimeout(() => {
-                copyButton.innerText = originalText;
-              }, 1000);
-            }).catch(err => {
-              alert("Ошибка при копировании текста: " + err);
-            });
-          } else {
-            try {
-              const textarea = document.createElement("textarea");
-              textarea.value = textToCopy;
-              textarea.style.position = "fixed";
-              textarea.style.top = "-9999px";
-              document.body.appendChild(textarea);
-              textarea.focus();
-              textarea.select();
-              const successful = document.execCommand("copy");
-              document.body.removeChild(textarea);
-              if (successful) {
-                const originalText = copyButton.innerText;
-                copyButton.innerText = "Скопировано";
-                setTimeout(() => {
-                  copyButton.innerText = originalText;
-                }, 1000);
-              } else {
-                throw new Error("Не удалось скопировать текст.");
-              }
-            } catch (err) {
-              alert("Ошибка при копировании текста: " + err);
-            }
-          }
-        });
-
-        // Кнопка "Закрыть"
-        const closeButton = document.createElement("button");
-        closeButton.innerText = "Закрыть";
-        closeButton.style.padding = "5px 10px";
-        closeButton.style.cursor = "pointer";
-        closeButton.style.border = "none";
-        closeButton.style.borderRadius = "4px";
-        closeButton.style.backgroundColor = "#f44336";
-        closeButton.style.color = "#ffffff";
-        closeButton.addEventListener("click", () => {
-          chrome.runtime.sendMessage({action: "stopGeneration"});
-          overlay.remove();
-        });
-
-        // Создаём контейнер для кнопок с Flexbox
-        const buttonsContainer = document.createElement("div");
-        buttonsContainer.style.display = "flex";
-        buttonsContainer.style.justifyContent = "center"; // Центрирование кнопок
-        buttonsContainer.style.gap = "10px"; // Расстояние между кнопками
-        buttonsContainer.style.marginTop = "20px"; // Отступ сверху
-
-        // Добавляем кнопки в контейнер
-        buttonsContainer.appendChild(copyButton);
-        buttonsContainer.appendChild(closeButton);
-
-        // Добавляем содержимое и контейнер с кнопками в модальное окно
-        modal.appendChild(contentContainer);
-        modal.appendChild(buttonsContainer);
-
-        // Добавляем модальное окно в оверлей
-        overlay.appendChild(modal);
-
-        // Добавляем оверлей в документ
-        document.body.appendChild(overlay);
-
-        // Обработчик ESC
-        document.addEventListener('keydown', (e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            chrome.runtime.sendMessage({action: "stopGeneration"});
-            overlay.remove();
-          }
-        });
-
-        // Добавляем стили для Markdown-элементов, таблиц и кнопок "Копировать"
-        const style = document.createElement("style");
-        style.innerHTML = `
-          /* Заголовки */
-          #ai-result-modal h1, #ai-result-modal h2, #ai-result-modal h3 {
-            color: #151515;
-          }
-          /* Ссылки */
-          #ai-result-modal a {
-            color: #1e90ff;
-            text-decoration: none;
-          }
-          #ai-result-modal a:hover {
-            text-decoration: underline;
-          }
-          /* Таблицы */
-          #ai-result-modal table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-          }
-          #ai-result-modal th, #ai-result-modal td {
-            border: 1px solid #000; /* Толщина 1px и чёрный цвет границы */
-            padding: 10px; /* Увеличенные отступы */
-            text-align: left;
-          }
-          #ai-result-modal th {
-            background-color: #BDD7EE; /* Фон заголовка */
-            font-weight: bold;
-          }
-          #ai-result-modal tr:nth-child(even) {
-            background-color: #FFFFFF; /* Чередование чётных строк */
-          }
-          #ai-result-modal tr:nth-child(odd) {
-            background-color: #F2F2F2; /* Чередование нечётных строк */
-          }
-          #ai-result-modal tr:hover {
-            background-color: #FFF2CC; /* Эффект наведения */
-          }
-          /* Блоки кода */
-          #ai-result-modal pre {
-            background-color: rgba(40, 40, 40, 1);
-            color: #ffffff;
-            padding: 10px;
-            border-radius: 4px;
-            overflow: auto;
-            position: relative;
-            margin: 10px 0;
-          }
-          #ai-result-modal code {
-            background-color: rgba(40, 40, 40, 1);
-            color: #ffffff;
-            padding: 2px 4px;
-            border-radius: 4px;
-          }
-          /* Списки */
-          #ai-result-modal ul, #ai-result-modal ol {
-            margin-left: 20px;
-          }
-          /* Кнопки "Копировать" внутри блоков кода */
-          .copy-button {
-            position: absolute;
-            top: 5px;
-            right: 5px;
-            padding: 2px 6px;
-            font-size: 16px;
-            cursor: pointer;
-            background-color: #4CAF50;
-            color: #ffffff;
-            border: none;
-            border-radius: 4px;
-          }
-        `;
-        document.head.appendChild(style);
-
-        // Добавляем кнопки "Копировать" к блокам кода
-        addCopyButtons();
-      },
-      args: [message, isError]
-    });
-  });
-}
-
-function initializeModal(tabId, isError = false) {
-  chrome.scripting.executeScript({
-    target: { tabId },
-    files: ['marked.min.js'],
-  }, () => {
-    // После загрузки Marked создаём пустое модальное окно
-    chrome.scripting.executeScript({
-      target: { tabId },
-      func: (isError) => {
-        const existingModal = document.getElementById("ai-result-modal-overlay");
-        if (existingModal) {
-          existingModal.remove();
-        }
-
-        // Создаём оверлей для модального окна
-        const overlay = document.createElement("div");
-        overlay.id = "ai-result-modal-overlay";
-
-        // Стили для оверлея
-        Object.assign(overlay.style, {
-          position: "fixed",
-          top: "0",
-          left: "0",
-          width: "100vw",
-          height: "100vh",
-          backgroundColor: "rgba(0, 0, 0, 0.5)",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          zIndex: 10000,
-          overflow: "auto"
-        });
-
-        // Создаём модальное окно
-        const modal = document.createElement("div");
-        modal.id = "ai-result-modal";
-
-        // Стили для модального окна
-        Object.assign(modal.style, {
-          backgroundColor: isError ? "rgba(255, 152, 152, 0.98)" : "rgba(220, 226, 226, 0.98)",
-          border: "1px solid #ffffff",
-          padding: "20px",
-          maxWidth: "65vw",
-          maxHeight: "80vh",
-          overflow: "auto",
-          fontFamily: "Arial, sans-serif",
-          fontSize: "14px",
-          color: "#151515",
-          borderRadius: "8px",
-          boxShadow: "0 0 10px rgba(0, 0, 0, 0.5)",
-          position: "relative"
-        });
-
-        // Создаём контейнер для содержимого
-        const contentContainer = document.createElement("div");
-        contentContainer.style.marginBottom = "20px";
-        contentContainer.innerHTML = "<em>Ожидаем ответ...</em>";
-
-        // Кнопка "Копировать весь текст"
-        const copyButton = document.createElement("button");
-        copyButton.innerText = "Копировать весь текст";
-        copyButton.style.padding = "5px 10px";
-        copyButton.style.cursor = "pointer";
-        copyButton.style.border = "none";
-        copyButton.style.borderRadius = "4px";
-        copyButton.style.backgroundColor = "#4CAF50";
-        copyButton.style.color = "#ffffff";
-        copyButton.addEventListener("click", () => {
-          // Логика копирования всего текста
-          const clone = contentContainer.cloneNode(true);
-          const buttons = clone.querySelectorAll('.copy-button');
-          buttons.forEach(btn => btn.remove());
-          const textToCopy = clone.innerText;
-
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(textToCopy).then(() => {
-              const originalText = copyButton.innerText;
-              copyButton.innerText = "Скопировано";
-              setTimeout(() => {
-                copyButton.innerText = originalText;
-              }, 1000);
-            }).catch(err => {
-              alert("Ошибка при копировании текста: " + err);
-            });
-          } else {
-            try {
-              const textarea = document.createElement("textarea");
-              textarea.value = textToCopy;
-              textarea.style.position = "fixed";
-              textarea.style.top = "-9999px";
-              document.body.appendChild(textarea);
-              textarea.focus();
-              textarea.select();
-              const successful = document.execCommand("copy");
-              document.body.removeChild(textarea);
-              if (successful) {
-                const originalText = copyButton.innerText;
-                copyButton.innerText = "Скопировано";
-                setTimeout(() => {
-                  copyButton.innerText = originalText;
-                }, 1000);
-              } else {
-                throw new Error("Не удалось скопировать текст.");
-              }
-            } catch (err) {
-              alert("Ошибка при копировании текста: " + err);
-            }
-          }
-        });
-
-        // Кнопка "Закрыть"
-        const closeButton = document.createElement("button");
-        closeButton.innerText = "Закрыть";
-        closeButton.style.padding = "5px 10px";
-        closeButton.style.cursor = "pointer";
-        closeButton.style.border = "none";
-        closeButton.style.borderRadius = "4px";
-        closeButton.style.backgroundColor = "#f44336";
-        closeButton.style.color = "#ffffff";
-        closeButton.addEventListener("click", () => {
-          chrome.runtime.sendMessage({action: "stopGeneration"});
-          overlay.remove();
-        });
-
-        // Создаём контейнер для кнопок с Flexbox
-        const buttonsContainer = document.createElement("div");
-        buttonsContainer.style.display = "flex";
-        buttonsContainer.style.justifyContent = "center"; // Центрирование кнопок
-        buttonsContainer.style.gap = "10px"; // Расстояние между кнопками
-        buttonsContainer.style.marginTop = "20px"; // Отступ сверху
-
-        // Добавляем кнопки в контейнер
-        buttonsContainer.appendChild(copyButton);
-        buttonsContainer.appendChild(closeButton);
-
-        // Добавляем содержимое и контейнер с кнопками в модальное окно
-        modal.appendChild(contentContainer);
-        modal.appendChild(buttonsContainer);
-
-        // Добавляем модальное окно в оверлей
-        overlay.appendChild(modal);
-
-        // Добавляем оверлей в документ
-        document.body.appendChild(overlay);
-
-        // Обработчик ESC
-        document.addEventListener('keydown', (e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            chrome.runtime.sendMessage({action: "stopGeneration"});
-            overlay.remove();
-          }
-        });
-
-        // Добавляем стили для Markdown-элементов, таблиц и кнопок "Копировать"
-        const style = document.createElement("style");
-        style.innerHTML = `
-          /* Заголовки */
-          #ai-result-modal h1, #ai-result-modal h2, #ai-result-modal h3 {
-            color: #151515;
-          }
-          /* Ссылки */
-          #ai-result-modal a {
-            color: #1e90ff;
-            text-decoration: none;
-          }
-          #ai-result-modal a:hover {
-            text-decoration: underline;
-          }
-          /* Таблицы */
-          #ai-result-modal table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-          }
-          #ai-result-modal th, #ai-result-modal td {
-            border: 1px solid #000; /* Толщина 1px и чёрный цвет границы */
-            padding: 10px; /* Увеличенные отступы */
-            text-align: left;
-          }
-          #ai-result-modal th {
-            background-color: #BDD7EE; /* Фон заголовка */
-            font-weight: bold;
-          }
-          #ai-result-modal tr:nth-child(even) {
-            background-color: #FFFFFF; /* Чередование чётных строк */
-          }
-          #ai-result-modal tr:nth-child(odd) {
-            background-color: #F2F2F2; /* Чередование нечётных строк */
-          }
-          #ai-result-modal tr:hover {
-            background-color: #FFF2CC; /* Эффект наведения */
-          }
-          /* Блоки кода */
-          #ai-result-modal pre {
-            background-color: rgba(40, 40, 40, 1);
-            color: #ffffff;
-            padding: 10px;
-            border-radius: 4px;
-            overflow: auto;
-            position: relative;
-            margin: 10px 0;
-          }
-          #ai-result-modal code {
-            background-color: rgba(40, 40, 40, 1);
-            color: #ffffff;
-            padding: 2px 4px;
-            border-radius: 4px;
-          }
-          /* Списки */
-          #ai-result-modal ul, #ai-result-modal ol {
-            margin-left: 20px;
-          }
-          /* Кнопки "Копировать" внутри блоков кода */
-          .copy-button {
-            position: absolute;
-            top: 5px;
-            right: 5px;
-            padding: 2px 6px;
-            font-size: 16px;
-            cursor: pointer;
-            background-color: #4CAF50;
-            color: #ffffff;
-            border: none;
-            border-radius: 4px;
-          }
-        `;
-        document.head.appendChild(style);
-
-        // Добавляем кнопки "Копировать" к блокам кода
-        addCopyButtons();
-      },
-      args: [isError]
-    });
-  });
-}
-
-// Обновленная функция updateModalContent с использованием Flexbox и исправленными стилями
-function updateModalContent(tabId, newContent) {
-  chrome.scripting.executeScript({
-    target: { tabId },
-    func: (newContent) => {
-      const modal = document.getElementById("ai-result-modal");
-      if (!modal) return;
-      const contentContainer = modal.querySelector("div");
-      if (contentContainer) {
-        // Используем marked для парсинга Markdown
-        contentContainer.innerHTML = marked.parse(newContent);
-        
-        // Добавляем кнопки "Копировать" к новым блокам кода
-        const codeBlocks = contentContainer.querySelectorAll("pre code");
-        codeBlocks.forEach((codeBlock) => {
-          // Проверяем, есть ли уже кнопка "Копировать"
-          if (codeBlock.parentElement.querySelector(".copy-button")) return;
-          
-          // Создаем кнопку "Копировать"
-          const copyButton = document.createElement("button");
-          copyButton.innerHTML = "📋";
-          copyButton.className = "copy-button";
-          
-          // Оборачиваем блок кода в контейнер с относительным позиционированием
-          const codeContainer = codeBlock.parentElement;
-          codeContainer.style.position = "relative";
-          codeContainer.appendChild(copyButton);
-          
-          // Обработчик клика для копирования кода
-          copyButton.addEventListener("click", () => {
-            const codeText = codeBlock.innerText;
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(codeText).then(() => {
-                const originalText = copyButton.innerText;
-                copyButton.innerText = "Скопировано";
-                setTimeout(() => {
-                  copyButton.innerText = originalText;
-                }, 1000);
-              }).catch(err => {
-                alert("Ошибка при копировании текста: " + err);
-              });
-            } else {
-              // Резервный метод копирования
-              try {
-                const textarea = document.createElement("textarea");
-                textarea.value = codeText;
-                textarea.style.position = "fixed";
-                textarea.style.top = "-9999px";
-                document.body.appendChild(textarea);
-                textarea.focus();
-                textarea.select();
-                const successful = document.execCommand('copy');
-                document.body.removeChild(textarea);
-                if (successful) {
-                  const originalText = copyButton.innerText;
-                  copyButton.innerText = "Скопировано";
-                  setTimeout(() => {
-                    copyButton.innerText = originalText;
-                  }, 1000);
-                } else {
-                  throw new Error("Не удалось скопировать текст.");
-                }
-              } catch (err) {
-                alert("Ошибка при копировании текста: " + err);
-              }
-            }
-          });
-        });
-      }
-    },
-    args: [newContent]
-  });
-}
-
-/**
- * Универсальная функция для показа prompt с автозаполнением и сохранением последнего запроса
- */
-async function handleUserPrompt(tab, { promptText, selectionText = "" }) {
-  // Получаем последний пользовательский запрос для prefill
-  const { lastUserPrompt, lastUserPromptTime } = await new Promise(resolve =>
-    chrome.storage.local.get(["lastUserPrompt", "lastUserPromptTime"], resolve)
+  const replacements = {
+    date: now.toLocaleDateString("ru-RU"),
+    time: now.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
+    selectionText: context.selectionText || "",
+    pageText: context.pageText || "",
+    pageTitle: context.pageTitle || "",
+    pageUrl: context.pageUrl || ""
+  };
+  return Object.entries(replacements).reduce(
+    (result, [key, replacement]) => result.split(`{{${key}}}`).join(replacement),
+    String(value)
   );
-  let prefill = "";
-  const now = Date.now();
-  if (lastUserPrompt && lastUserPromptTime && now - lastUserPromptTime < 10 * 60 * 1000) {
-    prefill = lastUserPrompt;
-  } else if (lastUserPrompt || lastUserPromptTime) {
-    // Если прошло больше 10 минут — очищаем память
-    chrome.storage.local.remove(["lastUserPrompt", "lastUserPromptTime"]);
-  }
-
-  // Показываем prompt с нужным текстом и prefill
-  let results;
-  try {
-    results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (text, prefill) => prompt(text, prefill),
-      args: [promptText, prefill],
-    });
-  } catch (err) {
-    console.error("Ошибка вызова chrome.scripting.executeScript для prompt:", err);
-    return null;
-  }
-  console.log("Результат prompt через scripting.executeScript:", results);
-  const userPrompt = results && results[0] ? results[0].result : undefined;
-  if (typeof userPrompt === "undefined") {
-    console.error("Не удалось получить результат prompt. Возможно, prompt не сработал в данном контексте.");
-    return null;
-  }
-  if (!userPrompt) return null;
-
-  // Всегда сохраняем последний пользовательский запрос (без контекста) и время
-  chrome.storage.local.set({ lastUserPrompt: userPrompt, lastUserPromptTime: Date.now() });
-
-  // Формируем итоговый промпт
-  let processedUserPrompt = replacePlaceholders(userPrompt);
-  let finalPrompt = processedUserPrompt;
-  if (selectionText) {
-    finalPrompt = `${processedUserPrompt}: "${selectionText}"`;
-  }
-  return { userPrompt: processedUserPrompt, finalPrompt };
 }
 
-// Обработчик кликов на пункты меню
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  try {
-    // Проверяем, определён ли tab
-    if (!tab) {
-      // Получаем активную вкладку
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      tab = activeTab;
-      if (!tab) {
-        throw new Error("Не удалось определить активную вкладку.");
-      }
-    }
-
-    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "menuItems", "systemPrompt"], async (settings) => {
-      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4", menuItems, systemPrompt } = settings;
-
-      if (!apiKey) {
-        displayModal(tab.id, "API-ключ не задан в настройках.", true);
-        return;
-      }
-
-      let finalPrompt = "";
-      let finalModel = apiModel; // Модель по умолчанию
-
-      if (info.menuItemId === "custom-prompt" && info.selectionText) {
-        try {
-          const promptText = info.selectionText
-            ? "Введите ваш запрос по выделенному тексту:"
-            : "Введите ваш запрос:";
-          const result = await handleUserPrompt(tab, { promptText, selectionText: info.selectionText });
-          if (!result) return;
-          finalPrompt = result.finalPrompt;
-        } catch (error) {
-          console.error("Ошибка при получении пользовательского запроса:", error);
-          displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
-          return;
-        }
-      } else if (info.menuItemId === "ask-ai") {
-        try {
-          const result = await handleUserPrompt(tab, { promptText: "Введите ваш запрос:" });
-          if (!result) return;
-          finalPrompt = result.finalPrompt;
-        } catch (error) {
-          console.error("Ошибка при получении пользовательского запроса:", error);
-          displayModal(tab.id, "Не удалось получить пользовательский запрос.", true);
-          return;
-        }
-      } else if (info.menuItemId.startsWith("menu-item-") && info.selectionText) {
-        const menuItemIndex = parseInt(info.menuItemId.replace("menu-item-", ""), 10);
-        const menuItem = menuItems[menuItemIndex];
-        if (menuItem) {
-          finalPrompt = replacePlaceholders(menuItem.prompt, info.selectionText);
-          if (menuItem.model && menuItem.model.trim() !== "") {
-            finalModel = menuItem.model; // Используем кастомную модель, если она задана
-          }
-        }
-      }
-
-      let systemContent = '';
-      if (systemPrompt) {
-        systemContent = replacePlaceholders(systemPrompt);
-      }
-
-      if (finalPrompt) {
-        processPrompt(tab.id, apiServer, apiKey, finalModel, finalPrompt, systemContent);
-      }
+function createContextMenus(menuItems = []) {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: "ai-ask-selection", title: "Спросить AI о выделенном", contexts: ["selection"] });
+    chrome.contextMenus.create({ id: "ai-ask-page", title: "Спросить AI об этой странице", contexts: ["page", "selection"] });
+    chrome.contextMenus.create({ id: "ai-summarize-page", title: "Суммаризировать страницу", contexts: ["page", "selection"] });
+    chrome.contextMenus.create({ id: "ai-separator", type: "separator", contexts: ["selection"] });
+    menuItems.forEach((item, index) => {
+      if (!item || !item.title || !item.prompt) return;
+      const usesSelection = item.prompt.includes("{{selectionText}}");
+      const usesPage = /\{\{page(Text|Title|Url)\}\}/.test(item.prompt);
+      chrome.contextMenus.create({
+        id: `ai-template-${index}`,
+        title: item.title,
+        contexts: usesSelection ? ["selection"] : usesPage ? ["page", "selection"] : ["page", "selection"]
+      });
     });
+  });
+}
+
+async function initializeExtension() {
+  const stored = await storageGet("sync", null);
+  const migration = {};
+  if (!stored.apiServer) migration.apiServer = DEFAULTS.apiServer;
+  if (!stored.apiModel) migration.apiModel = DEFAULTS.apiModel;
+  if (!stored.defaultPromptModel) migration.defaultPromptModel = stored.apiModel || DEFAULTS.defaultPromptModel;
+  if (!stored.quickModel) migration.quickModel = stored.apiModel || DEFAULTS.quickModel;
+  if (!stored.menuItems || !stored.menuItems.length) migration.menuItems = DEFAULT_MENU_ITEMS;
+  for (const key of ["apiProvider", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme"]) {
+    if (typeof stored[key] === "undefined") migration[key] = DEFAULTS[key];
+  }
+  if (Object.keys(migration).length) await storageSet("sync", migration);
+  createContextMenus((stored.menuItems && stored.menuItems.length ? stored.menuItems : DEFAULT_MENU_ITEMS));
+}
+
+chrome.runtime.onInstalled.addListener(initializeExtension);
+chrome.runtime.onStartup.addListener(async () => createContextMenus((await getSettings()).menuItems));
+
+async function ensureContentScript(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { action: "PING_AI_TEXT_TOOLS" });
+    return true;
+  } catch {
+    try {
+      await chrome.scripting.insertCSS({ target: { tabId }, files: ["content.css"] });
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["marked.min.js", "content.js"] });
+      return true;
+    } catch (error) {
+      console.warn("AI Text Tools cannot run on this page:", error);
+      return false;
+    }
+  }
+}
+
+async function getActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+async function sendToTab(tabId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
   } catch (error) {
-    console.error("Ошибка обработки запроса:", error);
-    if (tab && tab.id) {
-      displayModal(tab.id, `Произошла ошибка: ${error.message}`, true);
-    }
+    console.warn("Failed to message tab", tabId, error);
+    return null;
   }
-});
+}
 
-// Функция для добавления записи в историю запросов с учётом настраиваемого количества записей
-function addToHistory(query, response, model) {
-  // Сначала проверяем historyLimit
-  chrome.storage.sync.get(['historyLimit'], (data) => { // Изменено на storage.sync
-    const historyLimit = typeof data.historyLimit === 'number' ? data.historyLimit : 20;
-    
-    // Если historyLimit равен 0, не сохраняем историю
-    if (historyLimit === 0) {
-      // Очищаем существующую историю
-      chrome.storage.local.remove('history', () => {
-        console.log('История очищена, так как historyLimit = 0');
-      });
-      return;
-    }
+async function emitChatEvent(tabId, message) {
+  const event = { ...message, sourceTabId: tabId, surfaceOwner: activeSurfaces.get(tabId) || "page" };
+  await Promise.allSettled([
+    sendToTab(tabId, event),
+    chrome.runtime.sendMessage(event)
+  ]);
+}
 
-    const timestamp = new Date();
-    const entry = {
-      date: timestamp.toLocaleDateString(),
-      time: timestamp.toLocaleTimeString(),
-      query: query,
-      response: response,
-      model: model || ""
-    };
+async function readPageContext(tabId, limit, includeLinks = false) {
+  if (!(await ensureContentScript(tabId))) throw new Error("На этой странице расширения браузера не могут показывать интерфейс.");
+  const linkLimit = Math.min(16000, Math.max(2000, Math.floor(Number(limit || DEFAULTS.pageContextLimit) * .25)));
+  let context = await sendToTab(tabId, { action: "GET_AI_PAGE_CONTEXT", limit: Number.MAX_SAFE_INTEGER, includeLinks, linkLimit });
+  if (!context) throw new Error("Не удалось прочитать содержимое страницы.");
+  context = await augmentWithFrameText(tabId, context, includeLinks, linkLimit);
+  if (context.pageText.length > limit) {
+    const confirmation = await sendToTab(tabId, { action: "CONFIRM_AI_PAGE_OVERFLOW", actual: context.pageText.length, limit });
+    if (!confirmation?.proceed) throw new Error("Отправка полного текста страницы отменена пользователем.");
+  }
+  return context;
+}
 
-    // Получаем текущую историю
-    chrome.storage.local.get(['history'], (data) => {
-      let history = data.history || [];
+function mergePageLinks(linkGroups, maxLinks = 120, maxChars = 16000) {
+  const unique = new Map();
+  for (const links of linkGroups) for (const link of links || []) {
+    if (!link?.url || !link?.text) continue;
+    const previous = unique.get(link.url);
+    if (!previous || link.text.length > previous.text.length) unique.set(link.url, { text: String(link.text).slice(0, 180), url: String(link.url) });
+  }
+  const result = [];
+  let usedChars = 0;
+  for (const link of unique.values()) {
+    const size = link.text.length + link.url.length + 6;
+    if (result.length >= maxLinks || usedChars + size > maxChars) break;
+    result.push(link); usedChars += size;
+  }
+  return result;
+}
 
-      // Добавляем новую запись в начало массива
-      history.unshift(entry);
-
-      // Оставляем только последние historyLimit записей
-      if (history.length > historyLimit) {
-        history = history.slice(0, historyLimit);
+async function augmentWithFrameText(tabId, context, includeLinks = false, linkLimit = 16000) {
+  try {
+    const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, args: [includeLinks, linkLimit], func: (collectLinks, maxLinkChars) => {
+      const extensionHost = document.getElementById("ai-text-tools-host");
+      const previousDisplay = extensionHost?.style.display;
+      if (extensionHost) extensionHost.style.display = "none";
+      const links = [];
+      let usedChars = 0;
+      if (collectLinks) for (const anchor of document.querySelectorAll("a[href]")) {
+        if (anchor.closest("#ai-text-tools-host,[hidden],[aria-hidden='true']")) continue;
+        const style = getComputedStyle(anchor);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        const text = (anchor.innerText || anchor.getAttribute("aria-label") || anchor.title || anchor.querySelector("img[alt]")?.alt || "").replace(/\s+/g, " ").trim().slice(0, 180);
+        if (text.length < 2) continue;
+        try {
+          const url = new URL(anchor.getAttribute("href"), location.href);
+          if (!['http:', 'https:'].includes(url.protocol) || url.href.length > 2048) continue;
+          const size = text.length + url.href.length + 6;
+          if (links.length >= 120 || usedChars + size > maxLinkChars) break;
+          links.push({ text, url: url.href }); usedChars += size;
+        } catch {}
       }
-
-      // Сохраняем обновленную историю
-      chrome.storage.local.set({ history }, () => {
-        console.log(`История обновлена. Сохранено ${history.length} записей из ${historyLimit} возможных.`);
-      });
-    });
-  });
-}
-
-// Функция для обновления списка последних использованных моделей
-function updateRecentModels(model) {
-  if (!model) return;
-
-  chrome.storage.sync.get(["recentModels"], (data) => {
-    let recentModels = data.recentModels || [];
-    // Удаляем модель, если она уже есть, чтобы переместить ее в начало
-    recentModels = recentModels.filter(m => m !== model);
-    // Добавляем модель в начало
-    recentModels.unshift(model);
-    // Оставляем только 5 последних
-    if (recentModels.length > 5) {
-      recentModels = recentModels.slice(0, 5);
+      const result = { text: document.body?.innerText || document.documentElement?.innerText || "", title: document.title, url: location.href, links };
+      if (extensionHost) extensionHost.style.display = previousDisplay || "";
+      return result;
+    } });
+    let combined = context.pageText || "";
+    for (const result of results || []) {
+      const text = result.result?.text?.trim();
+      if (text && text.length > 20 && !combined.includes(text.slice(0, 300))) combined += `${combined ? "\n\n" : ""}${text}`;
     }
-    // Сохраняем
-    chrome.storage.sync.set({ recentModels });
+    let pageOrigin = "";
+    try { pageOrigin = new URL(context.pageUrl).origin; } catch {}
+    const frameLinkGroups = (results || []).filter(result => {
+      try { return !pageOrigin || new URL(result.result?.url).origin === pageOrigin; } catch { return false; }
+    }).map(result => result.result?.links);
+    const pageLinks = includeLinks ? mergePageLinks([context.pageLinks, ...frameLinkGroups], 120, linkLimit) : [];
+    return { ...context, pageText: combined.trim(), pageLinks, includeLinks: Boolean(includeLinks) };
+  } catch { return context; }
+}
+
+async function openComposer(tab, mode = "auto", openPanel = true) {
+  if (!tab?.id || !chrome.sidePanel) return { ok: false, error: "Боковая панель недоступна в этой версии браузера." };
+  const openingPanel = openPanel ? chrome.sidePanel.open({ tabId: tab.id }).then(() => null, error => error) : Promise.resolve(null);
+  if (!(await ensureContentScript(tab.id))) return { ok: false, error: "Содержимое этой служебной страницы недоступно расширению." };
+  await stopGeneration(tab.id, true);
+  sessions.delete(tab.id);
+  drafts.delete(tab.id);
+  if (chrome.storage.session) await chrome.storage.session.remove(`chat_${tab.id}`);
+  const settings = await getSettings();
+  const selection = await sendToTab(tab.id, { action: "GET_AI_SELECTION" });
+  const selectionText = selection?.selectionText || "";
+  drafts.set(tab.id, {
+    prompt: "",
+    mode: mode === "auto" ? (selectionText ? "selection" : "none") : mode,
+    selectionText,
+    model: settings.quickModel,
+    thinking: settings.quickThinking,
+    reasoningMaxTokens: settings.quickReasoningMaxTokens,
+    images: [],
+    temporary: false
+  });
+  activeSurfaces.set(tab.id, "sidepanel");
+  chrome.runtime.sendMessage({ action: "AI_SURFACE_OWNER", sourceTabId: tab.id, surfaceOwner: "sidepanel", newChat: true }).catch(() => {});
+  const openingError = await openingPanel;
+  if (openingError) return { ok: false, error: openingError.message || "Не удалось открыть боковую панель." };
+  return { ok: true };
+}
+
+function normalizeThinking(value, fallback = "none") {
+  const result = value === "default" || !value ? fallback : value;
+  const migrated = result === "on" ? "medium" : result === "off" ? "none" : result;
+  return ["none", "minimal", "low", "medium", "high", "xhigh", "max", "custom"].includes(migrated) ? migrated : "none";
+}
+
+function makeSessionId() {
+  return `aitt-${Date.now().toString(36)}-${crypto.randomUUID()}`;
+}
+
+function textFromContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.filter(part => part.type === "text").map(part => part.text).join("\n");
+}
+
+function compactMessages(messages) {
+  return messages.map(message => ({
+    ...message,
+    content: typeof message.content === "string"
+      ? message.content
+      : message.content.map(part => part.type === "image_url" ? { type: "text", text: "[Изображение было приложено к предыдущему сообщению]" } : part)
+  }));
+}
+
+function imagePreviews(images = []) {
+  return images.map(image => image?.previewDataUrl).filter(Boolean);
+}
+
+function apiMessages(messages) {
+  return messages.map(message => {
+    const content = Array.isArray(message.content)
+      ? message.content.map(part => ({ ...part, ...(part.image_url ? { image_url: { ...part.image_url } } : {}) }))
+      : message.content;
+    const result = { role: message.role, content };
+    if (message.reasoning_details) result.reasoning_details = message.reasoning_details;
+    return result;
   });
 }
 
-// Обновлённая функция processPrompt с добавленным вызовом addToHistory и updateRecentModels
-function processPrompt(tabId, apiServer, apiKey, apiModel, userPrompt, systemPrompt = '') {
-  showLoadingIndicator(tabId); // Показать индикатор
+async function persistSession(tabId, session) {
+  if (!chrome.storage.session) return;
+  await storageSet("session", {
+    [`chat_${tabId}`]: {
+      ...session,
+      messages: compactMessages(session.messages),
+      updatedAt: Date.now()
+    }
+  });
+}
 
-  const abortController = new AbortController();
-  currentAbortController = abortController;
-  isGenerating = true;
+async function loadSession(tabId) {
+  if (sessions.has(tabId)) return sessions.get(tabId);
+  if (!chrome.storage.session) return null;
+  const stored = await storageGet("session", `chat_${tabId}`);
+  const session = stored[`chat_${tabId}`];
+  if (session) sessions.set(tabId, session);
+  return session || null;
+}
 
-  // Включаем режим стриминга
-  let messages = [{ role: "user", content: userPrompt }];
-  if (systemPrompt) {
-    messages = [{ role: "system", content: systemPrompt }, ...messages];
+async function forgetTemporaryChat(tabId) {
+  const session = sessions.get(tabId);
+  const draft = drafts.get(tabId);
+  if (!session?.temporary && !draft?.temporary) return false;
+  await stopGeneration(tabId, true);
+  sessions.delete(tabId);
+  drafts.delete(tabId);
+  activeSurfaces.delete(tabId);
+  if (chrome.storage.session) await chrome.storage.session.remove(`chat_${tabId}`);
+  return true;
+}
+
+function buildUserContent(prompt, context, images = []) {
+  const sections = [];
+  if (context?.type === "selection" && context.selectionText) sections.push(`Контекст — выделенный текст:\n\n${context.selectionText}`);
+  if (context?.type === "page" && context.pageText) {
+    let pageSection = `Контекст открытой страницы:\nНазвание: ${context.pageTitle || "Без названия"}\nURL: ${context.pageUrl || ""}\n\n${context.pageText}`;
+    if (context.includeLinks && context.pageLinks?.length) {
+      const links = context.pageLinks.map(link => `- ${link.text}: ${link.url}`).join("\n");
+      pageSection += `\n\nСодержательные ссылки страницы (${context.pageLinks.length}):\n${links}`;
+    }
+    sections.push(pageSection);
   }
-  const requestBody = {
-    model: apiModel,
-    messages,
+  sections.push(prompt);
+  const text = sections.join("\n\n---\n\n");
+  const validImages = images.filter(image => image?.dataUrl);
+  if (!validImages.length) return text;
+  return [{ type: "text", text }, ...validImages.map(image => ({ type: "image_url", image_url: { url: image.dataUrl } }))];
+}
+
+async function startNewConversation(tabId, payload) {
+  const settings = await getSettings();
+  activeSurfaces.set(tabId, payload.source === "sidepanel" ? "sidepanel" : "page");
+  let context = payload.context || { type: "none" };
+  if (context.type === "page" && !context.pageText) context = { type: "page", ...(await readPageContext(tabId, settings.pageContextLimit, Boolean(context.includeLinks))) };
+  const templateContext = payload.contextForHistory || context;
+  const placeholderContext = {
+    selectionText: templateContext.selectionText,
+    pageText: templateContext.pageText,
+    pageTitle: templateContext.pageTitle,
+    pageUrl: templateContext.pageUrl
+  };
+  const system = replacePlaceholders(settings.systemPrompt, placeholderContext);
+  const prompt = payload.processed ? String(payload.prompt) : replacePlaceholders(payload.prompt, placeholderContext);
+  const model = payload.model || settings.quickModel;
+  const thinking = normalizeThinking(payload.thinking, settings.quickThinking);
+  const displayPrompt = payload.displayPrompt ?? prompt;
+  const requestedDisplayContext = payload.displayContext || (context.type !== "none" ? context : null);
+  const displayContext = requestedDisplayContext?.type === "selection" ? requestedDisplayContext : null;
+  const contextType = requestedDisplayContext?.type || context.type || "none";
+  const session = {
+    id: makeSessionId(),
+    model,
+    thinking,
+    reasoningMaxTokens: Number(payload.reasoningMaxTokens || settings.quickReasoningMaxTokens) || 2000,
+    messages: system ? [{ role: "system", content: system }] : [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    context: payload.contextForHistory || context,
+    title: (payload.title || displayPrompt).trim().slice(0, 80) || "Новый чат",
+    totalCost: 0,
+    temporary: Boolean(payload.temporary)
+  };
+  const inputImages = payload.images || (payload.image ? [payload.image] : []);
+  session.messages.push({ role: "user", content: buildUserContent(prompt, context, inputImages), displayText: displayPrompt, displayContext, contextType, pageLinksIncluded: contextType === "page" && Boolean(context.includeLinks), pageLinkCount: contextType === "page" ? context.pageLinks?.length || 0 : 0, imageCount: inputImages.filter(image => image?.dataUrl).length, imagePreviews: imagePreviews(inputImages) });
+  sessions.set(tabId, session);
+  drafts.delete(tabId);
+  if (payload.announceSurface) {
+    await chrome.runtime.sendMessage({ action: "AI_SURFACE_OWNER", sourceTabId: tabId, surfaceOwner: "sidepanel", newChat: true, externalRequest: true }).catch(() => {});
+  }
+  await generate(tabId, session, settings, prompt, { surface: payload.source, newConversation: true, userPrompt: displayPrompt, userContext: displayContext, userContextType: contextType, userPageLinksIncluded: contextType === "page" && Boolean(context.includeLinks), userPageLinkCount: contextType === "page" ? context.pageLinks?.length || 0 : 0, userImageCount: inputImages.filter(image => image?.dataUrl).length, title: session.title, temporary: session.temporary });
+}
+
+async function continueConversation(tabId, payload) {
+  const settings = await getSettings();
+  let session = await loadSession(tabId);
+  if (!session) return startNewConversation(tabId, payload);
+  const previousModel = session.model;
+  backfillAssistantModels(session, previousModel);
+  if (payload.model && payload.model !== session.model) session.model = payload.model;
+  if (payload.thinking) session.thinking = normalizeThinking(payload.thinking, settings.quickThinking);
+  if (payload.reasoningMaxTokens) session.reasoningMaxTokens = Number(payload.reasoningMaxTokens);
+  const inputImages = payload.images || (payload.image ? [payload.image] : []);
+  session.messages.push({ role: "user", content: buildUserContent(payload.prompt, null, inputImages), displayText: payload.displayPrompt ?? payload.prompt, imageCount: inputImages.filter(image => image?.dataUrl).length, imagePreviews: imagePreviews(inputImages) });
+  await generate(tabId, session, settings, payload.prompt, { surface: payload.source, modelChanged: Boolean(previousModel && session.model !== previousModel) });
+}
+
+async function regenerateConversation(tabId, payload = {}) {
+  const settings = await getSettings();
+  const session = await loadSession(tabId);
+  if (!session) throw new Error("Активный чат не найден.");
+  backfillAssistantModels(session, session.model);
+  const removedAssistant = session.messages.at(-1)?.role === "assistant" ? session.messages.pop() : null;
+  const previousModel = removedAssistant?.model || session.model;
+  if (payload.model) session.model = payload.model;
+  if (payload.thinking) session.thinking = normalizeThinking(payload.thinking, settings.quickThinking);
+  if (payload.reasoningMaxTokens) session.reasoningMaxTokens = Number(payload.reasoningMaxTokens);
+  const userMessage = [...session.messages].reverse().find(message => message.role === "user");
+  if (!userMessage) throw new Error("В чате нет запроса для перегенерации.");
+  await generate(tabId, session, settings, textFromContent(userMessage.content), { regenerated: true, surface: payload.source, modelChanged: Boolean(previousModel && session.model !== previousModel) });
+}
+
+function replacePromptPreservingContext(content, prompt, context = null) {
+  const replaceText = value => {
+    const divider = "\n\n---\n\n", index = String(value || "").lastIndexOf(divider);
+    if (index >= 0) return `${String(value).slice(0, index + divider.length)}${prompt}`;
+    if (context?.type === "selection" && context.selectionText) return buildUserContent(prompt, context);
+    if (context?.type === "page" && context.pageText) return buildUserContent(prompt, context);
+    return prompt;
+  };
+  if (typeof content === "string") return replaceText(content);
+  if (!Array.isArray(content)) return prompt;
+  let replaced = false;
+  return content.map(part => {
+    if (!replaced && part.type === "text" && !/^\[Изображение было приложено/.test(part.text || "")) { replaced = true; return { ...part, text: replaceText(part.text) }; }
+    return { ...part, ...(part.image_url ? { image_url: { ...part.image_url } } : {}) };
+  });
+}
+
+function backfillAssistantModels(session, fallbackModel) { for (const message of session.messages || []) if (message.role === "assistant" && !message.model) message.model = fallbackModel || session.model || ""; }
+
+async function editConversation(tabId, payload = {}) {
+  const settings = await getSettings();
+  const session = await loadSession(tabId);
+  if (!session) throw new Error("Активный чат не найден.");
+  backfillAssistantModels(session, session.model);
+  const userEntries = session.messages.map((message, index) => ({ message, index })).filter(item => item.message.role === "user");
+  const target = userEntries[Number(payload.userTurnIndex)];
+  if (!target) throw new Error("Сообщение для редактирования не найдено.");
+  const prompt = String(payload.prompt || "").trim();
+  if (!prompt) throw new Error("Запрос не может быть пустым.");
+  const removed = session.messages.slice(target.index + 1);
+  const previousAssistant = removed.find(message => message.role === "assistant");
+  const preservedContext = target.message.displayContext || (target.message.contextType && target.message.contextType !== "none" ? session.context : null);
+  target.message.content = replacePromptPreservingContext(target.message.content, prompt, preservedContext);
+  target.message.displayText = prompt;
+  session.messages = session.messages.slice(0, target.index + 1);
+  if (Number(payload.userTurnIndex) === 0) session.title = prompt.slice(0, 80) || session.title;
+  const previousModel = previousAssistant?.model || session.model;
+  if (payload.model) session.model = payload.model;
+  if (payload.thinking) session.thinking = normalizeThinking(payload.thinking, settings.quickThinking);
+  if (payload.reasoningMaxTokens) session.reasoningMaxTokens = Number(payload.reasoningMaxTokens);
+  session.updatedAt = Date.now();
+  await persistSession(tabId, session);
+  await saveChat(session);
+  await generate(tabId, session, settings, prompt, { edited: true, surface: payload.source, modelChanged: Boolean(previousModel && session.model !== previousModel) });
+}
+
+function reasoningTextFromDelta(delta) {
+  if (typeof delta.reasoning === "string") return delta.reasoning;
+  if (!Array.isArray(delta.reasoning_details)) return "";
+  return delta.reasoning_details.map(item => item.text || item.summary || "").join("");
+}
+
+function imagesFromDelta(delta) {
+  if (!Array.isArray(delta.images)) return [];
+  return delta.images.map(image => image?.image_url?.url || image?.url).filter(Boolean);
+}
+
+async function generate(tabId, session, settings, historyQuery, generationOptions = {}) {
+  const previous = activeRequests.get(tabId);
+  if (previous) previous.abort();
+  if (!settings.apiKey) {
+    await emitChatEvent(tabId, { action: "AI_CHAT_ERROR", error: "API-ключ не задан. Откройте настройки расширения." });
+    return;
+  }
+
+  const controller = new AbortController();
+  activeRequests.set(tabId, controller);
+  const openRouter = isOpenRouter(settings.apiServer);
+  const body = {
+    model: session.model,
+    messages: apiMessages(session.messages),
     stream: true
   };
-
-  fetch(`${apiServer}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(requestBody),
-    signal: abortController.signal
-  })
-    .then(response => {
-      if (!response.ok) {
-        return response.text().then(errorText => {
-          throw new Error(`Ошибка API: ${response.status} ${response.statusText}. ${errorText}`);
-        });
-      }
-      // Инициализируем пустое модальное окно для стриминга
-      initializeModal(tabId, false);
-      return response.body;
-    })
-    .then(async (body) => {
-      if (!body) {
-        throw new Error("Нет тела ответа.");
-      }
-
-      const reader = body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let done = false;
-      let accumulatedText = '';
-      let isFirstChunk = true; // Флаг для первого чанка
-      let buffer = ""; // Буфер для накопления данных
-
-      while (!done && isGenerating) {
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
-        if (value) {
-          const chunk = decoder.decode(value, { stream: true });
-          buffer += chunk; // Накопление данных в буфер
-
-          let lines = buffer.split('\n');
-          buffer = lines.pop(); // Оставляем неполную строку в буфере
-
-          for (const line of lines) {
-            const trimmedLine = line.trim();
-            if (trimmedLine.startsWith('data: ')) {
-              const jsonStr = trimmedLine.slice('data: '.length).trim();
-              if (jsonStr === '[DONE]') {
-                done = true;
-                break;
-              }
-              if (jsonStr) { // Проверка, что строка не пуста
-                try {
-                  const json = JSON.parse(jsonStr);
-                  const delta = json.choices?.[0]?.delta?.content;
-                  if (delta) {
-                    accumulatedText += delta;
-                    updateModalContent(tabId, accumulatedText);
-
-                    if (isFirstChunk) {
-                      removeLoadingIndicator(tabId); // Удалить спиннер при первом чанке
-                      isFirstChunk = false;
-                    }
-                  }
-                } catch (err) {
-                  console.error("Ошибка парсинга строки стрима:", err);
-                  // Можно добавить дополнительную логику для восстановления или пропуска
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Обработка оставшегося буфера, если необходимо
-      if (buffer && isGenerating) {
-        const trimmedLine = buffer.trim();
-        if (trimmedLine.startsWith('data: ')) {
-          const jsonStr = trimmedLine.slice('data: '.length).trim();
-          if (jsonStr && jsonStr !== '[DONE]') {
-            try {
-              const json = JSON.parse(jsonStr);
-                const delta = json.choices?.[0]?.delta?.content;
-              if (delta) {
-                accumulatedText += delta;
-                updateModalContent(tabId, accumulatedText);
-              }
-            } catch (err) {
-              console.error("Ошибка парсинга оставшейся строки стрима:", err);
-            }
-          }
-        }
-      }
-
-      // Добавляем запись в историю и обновляем список недавних моделей только если генерация не была остановлена
-      if (isGenerating) {
-        addToHistory(userPrompt, accumulatedText, apiModel);
-        updateRecentModels(apiModel); // <-- Обновляем недавние модели
-      }
-
-      isGenerating = false;
-      currentAbortController = null;
-    })
-    .catch(error => {
-      if (error && (error.name === 'AbortError' || error.name === 'DOMException' || error instanceof DOMException || (error.message && error.message.includes('aborted')) || (error.toString && error.toString().includes('Abort')))) {
-        return;
-      }
-      console.error("Ошибка обработки запроса:", error);
-      // Если возникла ошибка – инициализируем окно ошибки
-      initializeModal(tabId, true);
-      updateModalContent(tabId, `Произошла ошибка: ${error.message}`);
-
-      isGenerating = false;
-      currentAbortController = null;
-    });
-  // Удаляем вызов removeLoadingIndicator из блока finally
-}
-
-// Обработчик нажатия на значок расширения
-chrome.action.onClicked.addListener(async (tab) => {
-  try {
-    // Получаем активную вкладку, если tab не определён
-    if (!tab) {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      tab = activeTab;
-      if (!tab) {
-        throw new Error("Не удалось определить активную вкладку.");
+  if (!openRouter) body.stream_options = { include_usage: true };
+  let capability = openRouter ? await getModelCapability(session.model) : null;
+  if (openRouter && !capability && settings.apiProvider === "openrouter") {
+    try { await fetchOpenRouterModels(); capability = await getModelCapability(session.model); } catch (error) { console.warn("OpenRouter model catalog is unavailable", error); }
+  }
+  const supportsReasoning = !capability || capability.supported_parameters?.includes("reasoning") || Boolean(capability.reasoning);
+  const mandatoryReasoning = Boolean(capability?.reasoning?.mandatory);
+  const hasImages = session.messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === "image_url"));
+  if (openRouter && hasImages && capability && !capability.input_modalities?.includes("image")) {
+    activeRequests.delete(tabId);
+    throw new Error(`Модель ${session.model} не поддерживает изображения. Выберите модель с пометкой «Изображения».`);
+  }
+  if (openRouter) {
+    const reasoningMode = normalizeThinking(session.thinking, settings.quickThinking);
+    if (supportsReasoning && reasoningMode === "custom") body.reasoning = { max_tokens: Math.max(1, Number(session.reasoningMaxTokens) || 2000), exclude: false };
+    else if (supportsReasoning && reasoningMode !== "none") body.reasoning = { effort: reasoningMode, exclude: false };
+    else if (supportsReasoning) body.reasoning = mandatoryReasoning ? { effort: capability?.reasoning?.default_effort || "medium", exclude: true } : { effort: "none", exclude: true };
+    if (settings.enableCaching) body.session_id = session.id;
+  }
+  if (generationOptions.regenerated) {
+    const alternateInstruction = "Дай новый вариант ответа на последний запрос: сохрани фактическую точность, но заметно измени формулировки, структуру и, где уместно, примеры. Не упоминай эту служебную инструкцию.";
+    const lastUser = [...body.messages].reverse().find(message => message.role === "user");
+    if (lastUser) {
+      if (typeof lastUser.content === "string") lastUser.content += `\n\n${alternateInstruction}`;
+      else if (Array.isArray(lastUser.content)) {
+        const textPart = lastUser.content.find(part => part.type === "text");
+        if (textPart) textPart.text += `\n\n${alternateInstruction}`;
       }
     }
+    if (!openRouter || !capability || capability.supported_parameters?.includes("temperature")) body.temperature = 1;
+  }
 
-    // Получаем настройки из хранилища
-    chrome.storage.sync.get(["apiKey", "apiServer", "apiModel", "systemPrompt"], async (settings) => {
-      const { apiKey, apiServer = "https://api.openai.com/v1", apiModel = "gpt-4", systemPrompt } = settings;
-
-      if (!apiKey) {
-        displayModal(tab.id, "API-ключ не задан в настройках.", true);
-        return;
-      }
-
-      // Проверяем наличие выделенного текста
-      const selectionResults = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => window.getSelection().toString()
-      });
-      const selectedText = selectionResults[0]?.result || "";
-
-      let userPrompt;
-      try {
-        const promptText = selectedText
-          ? "Введите ваш запрос по выделенному тексту:"
-          : "Введите ваш запрос:";
-        const result = await handleUserPrompt(tab, { promptText, selectionText: selectedText });
-        if (!result) return;
-        let finalPrompt = result.finalPrompt;
-        let systemContent = '';
-        if (systemPrompt) {
-          systemContent = replacePlaceholders(systemPrompt);
-        }
-        processPrompt(tab.id, apiServer, apiKey, apiModel, finalPrompt, systemContent);
-      } catch (error) {
-        console.error("Ошибка при запросе ввода от пользователя:", error);
-        displayModal(tab.id, "Не удалось получить запрос от пользователя.", true);
-        return;
-      }
-    });
-  } catch (error) {
-    console.error("Ошибка при обработке нажатия на значок:", error);
-    if (tab && tab.id) {
-      displayModal(tab.id, `Произошла ошибка: ${error.message}`, true);
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${settings.apiKey}` };
+  if (openRouter) {
+    headers["HTTP-Referer"] = "https://github.com/ai-text-tools/browser-extension";
+    headers["X-Title"] = "AI Text Tools";
+    if (settings.enableCaching) {
+      headers["X-OpenRouter-Cache"] = "true";
+      headers["X-OpenRouter-Cache-TTL"] = String(Math.max(1, Math.min(86400, Number(settings.cacheTtl) || 300)));
     }
   }
+
+  await emitChatEvent(tabId, {
+    action: "AI_CHAT_STARTED",
+    model: session.model,
+    thinking: session.thinking,
+    reasoningMaxTokens: session.reasoningMaxTokens,
+    cachedConversation: Boolean(settings.enableCaching && openRouter),
+    regenerated: Boolean(generationOptions.regenerated),
+    edited: Boolean(generationOptions.edited),
+    surface: generationOptions.surface || "page",
+    newConversation: Boolean(generationOptions.newConversation),
+    userPrompt: generationOptions.userPrompt || "",
+    userContext: generationOptions.userContext || null,
+    userContextType: generationOptions.userContextType || "none",
+    userPageLinksIncluded: Boolean(generationOptions.userPageLinksIncluded),
+    userPageLinkCount: Number(generationOptions.userPageLinkCount) || 0,
+    userImageCount: Number(generationOptions.userImageCount) || 0,
+    title: generationOptions.title || session.title,
+    temporary: Boolean(generationOptions.temporary),
+    modelChanged: Boolean(generationOptions.modelChanged),
+    reasoningAdjusted: mandatoryReasoning && normalizeThinking(session.thinking) === "none" ? "Модель требует Reasoning: он включён скрыто автоматически." : (!supportsReasoning && normalizeThinking(session.thinking) !== "none" ? "Модель не поддерживает управляемый Reasoning: параметр отключён автоматически." : "")
+  });
+
+  let answer = "";
+  let reasoning = "";
+  session.partialAnswer = "";
+  session.partialReasoning = "";
+  let reasoningDetails = [];
+  let usage = null;
+  const imageUrls = [];
+  try {
+    const endpoint = `${settings.apiServer.replace(/\/$/, "")}/chat/completions`;
+    let response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal });
+    let cacheStatus = response.headers.get("X-OpenRouter-Cache-Status");
+    if (!response.ok) {
+      const detail = await response.text();
+      if (openRouter && response.status === 400 && /reasoning is mandatory|cannot be disabled/i.test(detail) && body.reasoning?.effort === "none") {
+        body.reasoning = { enabled: true, exclude: true };
+        await rememberMandatoryReasoning(session.model);
+        await emitChatEvent(tabId, { action: "AI_CHAT_META", notice: "Эта модель требует reasoning. Расширение автоматически включило его в скрытом режиме и повторило запрос." });
+        response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal });
+        if (!response.ok) throw new Error(`API ${response.status}: ${(await response.text()).slice(0, 800)}`);
+        cacheStatus = response.headers.get("X-OpenRouter-Cache-Status");
+      } else {
+        throw new Error(`API ${response.status}: ${detail.slice(0, 800)}`);
+      }
+    }
+    await emitChatEvent(tabId, { action: "AI_CHAT_META", cacheStatus });
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const data = trimmed.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        let event;
+        try { event = JSON.parse(data); } catch { continue; }
+        if (event.error) throw new Error(event.error.message || JSON.stringify(event.error));
+        if (event.usage) usage = event.usage;
+        const delta = event.choices?.[0]?.delta || {};
+        const contentDelta = typeof delta.content === "string"
+          ? delta.content
+          : Array.isArray(delta.content)
+            ? delta.content.map(part => part?.text || "").join("")
+            : "";
+        const reasoningDelta = reasoningTextFromDelta(delta);
+        const newImages = imagesFromDelta(delta);
+        answer += contentDelta;
+        reasoning += reasoningDelta;
+        session.partialAnswer = answer;
+        session.partialReasoning = reasoning;
+        if (Array.isArray(delta.reasoning_details)) reasoningDetails.push(...delta.reasoning_details);
+        imageUrls.push(...newImages);
+        if (contentDelta || reasoningDelta || newImages.length) {
+          await emitChatEvent(tabId, { action: "AI_CHAT_DELTA", content: contentDelta, reasoning: reasoningDelta, images: newImages });
+        }
+      }
+    }
+
+    const requestCost = Number(usage?.cost) || 0;
+    const assistantMessage = { role: "assistant", content: answer || (imageUrls.length ? "Изображение создано." : ""), reasoning, usage, cost: requestCost, model: session.model, modelChanged: Boolean(generationOptions.modelChanged) };
+    if (reasoningDetails.length) assistantMessage.reasoning_details = reasoningDetails;
+    session.messages.push(assistantMessage);
+    delete session.partialAnswer;
+    delete session.partialReasoning;
+    session.updatedAt = Date.now();
+    session.totalCost = (Number(session.totalCost) || 0) + requestCost;
+    await persistSession(tabId, session);
+    await saveChat(session);
+    await updateRecentModels(session.model);
+    await emitChatEvent(tabId, { action: "AI_CHAT_DONE", content: assistantMessage.content, reasoning, usage, images: imageUrls, requestCost, totalCost: session.totalCost, cacheReadTokens: usage?.prompt_tokens_details?.cached_tokens || 0, model: session.model, modelChanged: Boolean(generationOptions.modelChanged) });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      if (activeRequests.get(tabId) === controller) await emitChatEvent(tabId, { action: "AI_CHAT_STOPPED" });
+    } else {
+      console.error("AI request failed", error);
+      await emitChatEvent(tabId, { action: "AI_CHAT_ERROR", error: error.message || String(error) });
+    }
+  } finally {
+    if (activeRequests.get(tabId) === controller) activeRequests.delete(tabId);
+  }
+}
+
+async function rememberMandatoryReasoning(modelId) {
+  const models = await getModelCatalog();
+  const model = models.find(item => item.id === modelId);
+  if (model) model.reasoning = { ...(model.reasoning || {}), mandatory: true, default_enabled: true };
+  else models.push({ id: modelId, name: modelId, input_modalities: ["text"], output_modalities: ["text"], supported_parameters: ["reasoning"], reasoning: { mandatory: true, default_enabled: true }, pricing: {} });
+  await storageSet("local", { openRouterModels: models });
+}
+
+async function saveChat(session) {
+  if (session.temporary || session.historyDisabled) return;
+  const { historyLimit = DEFAULTS.historyLimit } = await storageGet("sync", ["historyLimit"]);
+  if (!historyLimit) return;
+  const { chats = [] } = await storageGet("local", ["chats"]);
+  const compact = { ...session, messages: compactMessages(session.messages) };
+  const updated = [compact, ...chats.filter(chat => chat.id !== session.id)].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, Math.min(1000, historyLimit));
+  await storageSet("local", { chats: updated });
+}
+
+async function deleteSavedChats(chatIds = []) {
+  const ids = new Set(chatIds.map(String).filter(Boolean));
+  if (!ids.size) return { deleted: 0, chats: [] };
+  const stored = await storageGet("local", ["chats", "history"]);
+  const chats = Array.isArray(stored.chats) ? stored.chats : [];
+  const history = Array.isArray(stored.history) ? stored.history : [];
+  const remainingChats = chats.filter(chat => !ids.has(String(chat.id)));
+  const remainingHistory = history.filter((entry, index) => !ids.has(String(entry.chatId || `legacy-${index}`)));
+  await storageSet("local", { chats: remainingChats, history: remainingHistory });
+
+  for (const [tabId, session] of sessions) {
+    if (!ids.has(String(session?.id))) continue;
+    session.historyDisabled = true;
+    await persistSession(tabId, session);
+  }
+  if (chrome.storage.session) {
+    const storedSessions = await storageGet("session", null);
+    const updates = {};
+    for (const [key, session] of Object.entries(storedSessions)) {
+      if (key.startsWith("chat_") && ids.has(String(session?.id))) updates[key] = { ...session, historyDisabled: true };
+    }
+    if (Object.keys(updates).length) await storageSet("session", updates);
+  }
+  return { deleted: chats.length - remainingChats.length + history.length - remainingHistory.length, chats: remainingChats };
+}
+
+async function updateRecentModels(model) {
+  if (!model) return;
+  const { recentModels = [] } = await storageGet("sync", ["recentModels"]);
+  await storageSet("sync", { recentModels: [model, ...recentModels.filter(item => item !== model)].slice(0, 12) });
+}
+
+async function stopGeneration(tabId, silent = false) {
+  const controller = activeRequests.get(tabId);
+  if (silent) activeRequests.delete(tabId);
+  if (controller) controller.abort();
+}
+
+async function summarizePage(tab, openPanel = true) {
+  const openingPanel = openPanel && chrome.sidePanel ? chrome.sidePanel.open({ tabId: tab.id }).then(() => null, error => error) : Promise.resolve(null);
+  const settings = await getSettings();
+  const context = await readPageContext(tab.id, settings.pageContextLimit);
+  const surface = "sidepanel";
+  activeSurfaces.set(tab.id, surface);
+  const openingError = await openingPanel;
+  if (openingError) throw openingError;
+  if (activeRequests.has(tab.id)) await emitChatEvent(tab.id, { action: "AI_CHAT_STOPPED" });
+  await startNewConversation(tab.id, {
+    prompt: settings.pageSummaryPrompt,
+    model: settings.quickModel,
+    thinking: settings.quickThinking,
+    context: { type: "page", ...context },
+    source: surface,
+    announceSurface: true
+  });
+}
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (!tab?.id) return;
+  try {
+    if (info.menuItemId === "ai-ask-selection") return void openComposer(tab, "selection");
+    if (info.menuItemId === "ai-ask-page") return void openComposer(tab, "page");
+    if (info.menuItemId === "ai-summarize-page") return void summarizePage(tab);
+    if (!String(info.menuItemId).startsWith("ai-template-")) return;
+
+    if (chrome.sidePanel) await chrome.sidePanel.open({ tabId: tab.id });
+
+    const settings = await getSettings();
+    const index = Number(String(info.menuItemId).replace("ai-template-", ""));
+    const item = settings.menuItems[index];
+    if (!item || !(await ensureContentScript(tab.id))) return;
+    let page = {};
+    if (/\{\{page(Text|Title|Url)\}\}/.test(item.prompt)) page = await readPageContext(tab.id, settings.pageContextLimit);
+    const context = {
+      type: info.selectionText ? "selection" : Object.keys(page).length ? "page" : "none",
+      selectionText: info.selectionText || "",
+      ...page
+    };
+    const prompt = replacePlaceholders(item.prompt, context);
+    const displayPrompt = replacePlaceholders(item.prompt, { selectionText: "", pageText: "", pageTitle: "", pageUrl: "" }).replace(/\n{3,}/g, "\n\n").trim() || item.title;
+    activeSurfaces.set(tab.id, "sidepanel");
+    await startNewConversation(tab.id, {
+      prompt,
+      displayPrompt,
+      displayContext: context,
+      title: item.title,
+      processed: true,
+      model: item.model || settings.defaultPromptModel,
+      thinking: normalizeThinking(item.thinking, settings.defaultThinking),
+      reasoningMaxTokens: Number(item.reasoningMaxTokens || settings.defaultReasoningMaxTokens) || 2000,
+      context: { type: "none" },
+      contextForHistory: context,
+      source: "sidepanel",
+      announceSurface: true
+    });
+  } catch (error) {
+    await emitChatEvent(tab.id, { action: "AI_CHAT_ERROR", error: error.message || String(error) });
+  }
+});
+
+chrome.commands.onCommand.addListener(async (command, commandTab) => {
+  const tab = commandTab?.id ? commandTab : await getActiveTab();
+  if (!tab) return;
+  if (command === "ask-ai") await openComposer(tab, "auto");
+  if (command === "ask-page") await openComposer(tab, "page");
+  if (command === "summarize-page") await summarizePage(tab);
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const tabId = sender.tab?.id;
+  (async () => {
+    switch (message.action) {
+      case "UPDATE_AI_CONTEXT_MENUS":
+        createContextMenus((await getSettings()).menuItems);
+        return { ok: true };
+      case "FETCH_OPENROUTER_MODELS":
+        return { ok: true, models: await fetchOpenRouterModels(message) };
+      case "GET_OPENROUTER_MODELS":
+        return { ok: true, models: await getModelCatalog() };
+      case "OPEN_AI_FROM_POPUP": {
+        const tab = message.targetTabId ? await chrome.tabs.get(message.targetTabId) : await getActiveTab();
+        return openComposer(tab, message.mode || "auto", !message.panelAlreadyOpen);
+      }
+      case "OPEN_SIDE_PANEL_FROM_POPUP": {
+        const tab = message.targetTabId ? await chrome.tabs.get(message.targetTabId) : await getActiveTab();
+        if (!tab?.id || !chrome.sidePanel) return { ok: false, error: "Боковая панель недоступна." };
+        return openComposer(tab, "auto", !message.panelAlreadyOpen);
+      }
+      case "SUMMARIZE_AI_FROM_POPUP": {
+        const tab = message.targetTabId ? await chrome.tabs.get(message.targetTabId) : await getActiveTab();
+        if (!tab) return { ok: false, error: "Активная вкладка не найдена." };
+        summarizePage(tab, !message.panelAlreadyOpen).catch(console.error);
+        return { ok: true };
+      }
+      case "START_AI_CHAT":
+        {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false };
+        startNewConversation(targetTabId, message).catch(error => emitChatEvent(targetTabId, { action: "AI_CHAT_ERROR", error: error.message, surface: message.source }));
+        return { ok: true };
+        }
+      case "CONTINUE_AI_CHAT":
+        {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false };
+        continueConversation(targetTabId, message).catch(error => emitChatEvent(targetTabId, { action: "AI_CHAT_ERROR", error: error.message, surface: message.source }));
+        return { ok: true };
+        }
+      case "REGENERATE_AI_CHAT": {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false };
+        regenerateConversation(targetTabId, message).catch(error => emitChatEvent(targetTabId, { action: "AI_CHAT_ERROR", error: error.message, surface: message.source }));
+        return { ok: true };
+      }
+      case "EDIT_AI_MESSAGE": {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false };
+        editConversation(targetTabId, message).catch(error => emitChatEvent(targetTabId, { action: "AI_CHAT_ERROR", error: error.message, surface: message.source }));
+        return { ok: true };
+      }
+      case "OPEN_AI_SIDE_PANEL": {
+        if (!tabId || !chrome.sidePanel) return { ok: false, error: "Chrome Side Panel недоступен в этой версии браузера." };
+        if (message.draft) drafts.set(tabId, message.draft);
+        activeSurfaces.set(tabId, "sidepanel");
+        chrome.sidePanel.open({ tabId }).catch(console.error);
+        return { ok: true };
+      }
+      case "GET_ACTIVE_AI_CHAT": {
+        const targetTab = message.tabId ? { id: message.tabId } : await getActiveTab();
+        if (!targetTab?.id) return { ok: false };
+        const session = await loadSession(targetTab.id);
+        const settings = await getSettings();
+        return { ok: true, tabId: targetTab.id, session, draft: drafts.get(targetTab.id) || null, generating: activeRequests.has(targetTab.id), sendOnEnter: settings.sendOnEnter, theme: settings.theme, model: settings.quickModel, thinking: settings.quickThinking, reasoningMaxTokens: settings.quickReasoningMaxTokens, modelCatalog: settings.apiProvider === "openrouter" ? await getModelCatalog() : [], recentModels: settings.recentModels || [], menuItems: settings.menuItems || [], pageContextLimit: settings.pageContextLimit, sidePanelTabBehavior: settings.sidePanelTabBehavior };
+      }
+      case "AI_SELECTION_CHANGED": {
+        if (!tabId) return { ok: false };
+        chrome.runtime.sendMessage({ action: "AI_SELECTION_UPDATED", sourceTabId: tabId, selectionText: message.selectionText || "" }).catch(() => {});
+        return { ok: true };
+      }
+      case "GET_TAB_SELECTION": {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId || !(await ensureContentScript(targetTabId))) return { ok: false, selectionText: "" };
+        return { ok: true, ...(await sendToTab(targetTabId, { action: "GET_AI_SELECTION" })) };
+      }
+      case "PREVIEW_PAGE_CONTEXT": {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false };
+        if (!(await ensureContentScript(targetTabId))) return { ok: false, error: "Содержимое этой страницы недоступно." };
+        const settings = await getSettings();
+        const includeLinks = Boolean(message.includeLinks);
+        const linkLimit = Math.min(16000, Math.max(2000, Math.floor(settings.pageContextLimit * .25)));
+        let context = await sendToTab(targetTabId, { action: "GET_AI_PAGE_CONTEXT", limit: Number.MAX_SAFE_INTEGER, includeLinks, linkLimit });
+        if (context) context = await augmentWithFrameText(targetTabId, context, includeLinks, linkLimit);
+        return context ? { ok: true, length: context.pageText.length, linkCount: context.pageLinks?.length || 0, title: context.pageTitle, url: context.pageUrl } : { ok: false, error: "Не удалось извлечь текст страницы." };
+      }
+      case "CLAIM_AI_SURFACE": {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false };
+        activeSurfaces.set(targetTabId, message.surface === "sidepanel" ? "sidepanel" : "page");
+        return { ok: true };
+      }
+      case "OPEN_AI_CHAT_WINDOW": {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false, error: "Вкладка чата не найдена." };
+        if (message.draft) drafts.set(targetTabId, { ...message.draft, mode: "none", selectionText: "" });
+        activeSurfaces.set(targetTabId, "sidepanel");
+        const settings = await getSettings();
+        const browserWindow = await chrome.windows.getCurrent().catch(() => null);
+        const compact = Number(browserWindow?.width || 1200) < 900;
+        const remembered = await storageGet("local", ["rememberedChatWindowWidth", "rememberedCompactChatWindowWidth"]);
+        const configured = compact ? settings.chatWindowCompactWidth : settings.chatWindowWidth;
+        const rememberedWidth = compact ? remembered.rememberedCompactChatWindowWidth : remembered.rememberedChatWindowWidth;
+        const width = settings.rememberChatWindowWidth && rememberedWidth ? rememberedWidth : configured;
+        const url = chrome.runtime.getURL(`sidepanel.html?tabId=${targetTabId}&window=1&compact=${compact ? 1 : 0}`);
+        const createdWindow = await chrome.windows.create({ url, type: "popup", width: Math.max(420, Number(width) || 760), height: 760 });
+        const temporary = sessions.get(targetTabId)?.temporary || drafts.get(targetTabId)?.temporary;
+        if (temporary && createdWindow?.id != null) temporaryWindows.set(createdWindow.id, targetTabId);
+        if (chrome.sidePanel?.close) {
+          const targetTab = await chrome.tabs.get(targetTabId).catch(() => null);
+          if (targetTab?.windowId != null) await chrome.sidePanel.close({ windowId: targetTab.windowId }).catch(() => {});
+        }
+        return { ok: true };
+      }
+      case "SAVE_AI_CHAT_WINDOW_WIDTH": {
+        const settings = await getSettings();
+        if (!settings.rememberChatWindowWidth) return { ok: true };
+        const key = message.compact ? "rememberedCompactChatWindowWidth" : "rememberedChatWindowWidth";
+        await storageSet("local", { [key]: Math.max(420, Math.min(1800, Number(message.width) || 760)) });
+        return { ok: true };
+      }
+      case "FORGET_TEMPORARY_CHAT": {
+        const targetTabId = message.tabId || tabId;
+        if (targetTabId) await forgetTemporaryChat(targetTabId);
+        return { ok: true };
+      }
+      case "SAVE_AI_DRAFT": {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false };
+        if (message.draft) {
+          const previous = drafts.get(targetTabId) || {};
+          drafts.set(targetTabId, { ...previous, ...message.draft, images: Object.hasOwn(message.draft, "images") ? message.draft.images : (previous.images || []) });
+        } else drafts.delete(targetTabId);
+        return { ok: true };
+      }
+      case "RESET_AI_CHAT": {
+        const targetTabId = message.tabId || tabId;
+        if (!targetTabId) return { ok: false };
+        await stopGeneration(targetTabId);
+        sessions.delete(targetTabId); drafts.delete(targetTabId);
+        if (chrome.storage.session) await chrome.storage.session.remove(`chat_${targetTabId}`);
+        return { ok: true };
+      }
+      case "RESTORE_AI_WINDOW": {
+        const targetTabId = message.tabId;
+        if (!targetTabId || !(await ensureContentScript(targetTabId))) return { ok: false, error: "Нельзя развернуть чат на этой странице." };
+        const settings = await getSettings();
+        activeSurfaces.set(targetTabId, "page");
+        const draft = message.draft || drafts.get(targetTabId);
+        const session = await loadSession(targetTabId);
+        if (draft && !session) await sendToTab(targetTabId, { action: "OPEN_AI_DRAFT", draft, sendOnEnter: settings.sendOnEnter, theme: settings.theme, pageContextLimit: settings.pageContextLimit, modelCatalog: settings.apiProvider === "openrouter" ? await getModelCatalog() : [], recentModels: settings.recentModels || [], reasoningMaxTokens: settings.quickReasoningMaxTokens });
+        else if (session) await sendToTab(targetTabId, { action: "OPEN_AI_CHAT_HISTORY", session, generating: activeRequests.has(targetTabId), sendOnEnter: settings.sendOnEnter, theme: settings.theme });
+        if (chrome.sidePanel?.close) {
+          const targetTab = await chrome.tabs.get(targetTabId);
+          if (targetTab.windowId != null) await chrome.sidePanel.close({ windowId: targetTab.windowId }).catch(() => chrome.sidePanel.close({ tabId: targetTabId }).catch(() => {}));
+        }
+        return { ok: true };
+      }
+      case "GET_SAVED_AI_CHATS": {
+        const { chats = [] } = await storageGet("local", ["chats"]);
+        const settings = await getSettings();
+        return { ok: true, chats, recentChatsLimit: settings.recentChatsLimit };
+      }
+      case "DELETE_SAVED_AI_CHATS": {
+        const result = await deleteSavedChats(Array.isArray(message.chatIds) ? message.chatIds : [message.chatId]);
+        return { ok: true, ...result };
+      }
+      case "OPEN_SAVED_AI_CHAT": {
+        const targetTab = message.targetTabId ? await chrome.tabs.get(message.targetTabId) : await getActiveTab();
+        if (!targetTab?.id) return { ok: false, error: "Чат нельзя открыть на этой странице." };
+        const { chats = [] } = await storageGet("local", ["chats"]);
+        const chat = chats.find(item => item.id === message.chatId);
+        if (!chat) return { ok: false, error: "Чат не найден." };
+        sessions.set(targetTab.id, { ...chat });
+        await persistSession(targetTab.id, chat);
+        if (message.openInSidePanel) {
+          activeSurfaces.set(targetTab.id, "sidepanel");
+          if (!message.panelAlreadyOpen) chrome.sidePanel.open({ tabId: targetTab.id }).catch(console.error);
+          chrome.runtime.sendMessage({ action: "AI_SURFACE_OWNER", sourceTabId: targetTab.id, surfaceOwner: "sidepanel", newChat: true, savedChat: true }).catch(() => {});
+          return { ok: true };
+        }
+        if (!(await ensureContentScript(targetTab.id))) return { ok: false, error: "Чат нельзя открыть на этой странице." };
+        activeSurfaces.set(targetTab.id, "page");
+        const settings = await getSettings();
+        await sendToTab(targetTab.id, { action: "OPEN_AI_CHAT_HISTORY", session: chat, sendOnEnter: settings.sendOnEnter, theme: settings.theme });
+        return { ok: true };
+      }
+      case "STOP_AI_CHAT":
+        if (message.tabId || tabId) await stopGeneration(message.tabId || tabId);
+        return { ok: true };
+      case "GET_AI_SETTINGS_SUMMARY": {
+        const settings = await getSettings();
+        return { model: settings.quickModel, server: settings.apiServer, provider: settings.apiProvider, caching: settings.enableCaching, theme: settings.theme, recentChatsLimit: settings.recentChatsLimit };
+      }
+      default:
+        return null;
+    }
+  })().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
+  return true;
+});
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  stopGeneration(tabId);
+  sessions.delete(tabId);
+  drafts.delete(tabId);
+  activeSurfaces.delete(tabId);
+  if (chrome.storage.session) chrome.storage.session.remove(`chat_${tabId}`);
+});
+
+if (chrome.windows?.onRemoved) chrome.windows.onRemoved.addListener(windowId => {
+  const tabId = temporaryWindows.get(windowId);
+  if (!tabId) return;
+  temporaryWindows.delete(windowId);
+  forgetTemporaryChat(tabId);
+});
+
+if (chrome.sidePanel?.onClosed) chrome.sidePanel.onClosed.addListener(info => {
+  if (info.tabId != null) {
+    if (![...temporaryWindows.values()].includes(info.tabId)) forgetTemporaryChat(info.tabId);
+    return;
+  }
+  for (const [tabId, session] of sessions) if (session.temporary && ![...temporaryWindows.values()].includes(tabId)) forgetTemporaryChat(tabId);
+  for (const [tabId, draft] of drafts) if (draft.temporary && ![...temporaryWindows.values()].includes(tabId)) forgetTemporaryChat(tabId);
 });
