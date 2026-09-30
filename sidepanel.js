@@ -123,7 +123,7 @@ function renderDraft(draft) {
 function renderSession(session) {
   cancelEdit(false); hideOverflowChoice(); state.session = session; state.isNew = false; state.temporary = Boolean(session.temporary); state.totalCost = Number(session.totalCost) || 0;
   $("title").textContent = session.title || "Чат";
-  $("meta").textContent = `${session.model || ""} · $${money(state.totalCost)}`;
+  updateChatMeta(session.model);
   $("draftControls").classList.add("hidden"); $("chat").innerHTML = "";
   $("chatModel").value = session.model || $("model").value || ""; $("chatOptions").classList.remove("hidden"); $("chatSettings").classList.add("hidden"); applyChatModelCapability(session.thinking);
   $("input").value = ""; autoResize();
@@ -318,6 +318,11 @@ function beginAssistant() {
   bubble.closest(".message-row")?.querySelector("[data-retry]")?.classList.add("hidden");
   syncPrimary(); scrollDown(true); return bubble;
 }
+function updateChatMeta(model = state.session?.model || "") {
+  if (state.isNew) return;
+  $("meta").textContent = [state.temporary ? "Временный" : "", model, formatCost(state.totalCost)].filter(Boolean).join(" · ");
+}
+document.addEventListener("aitt-currencychange", () => { refreshResponseModelLabels(); updateChatMeta(); });
 function showRetry() { currentAssistant()?.closest(".message-row")?.querySelector("[data-retry]")?.classList.remove("hidden"); }
 function currentAssistant() { return [...$("chat").querySelectorAll(".message.assistant")].at(-1); }
 function finishStatus(text, error = false) {
@@ -521,7 +526,7 @@ async function copyText(text, button = null) {
 }
 function toast(text) { const node = document.createElement("div"); node.className = "toast"; node.textContent = text; $("toasts").append(node); setTimeout(() => node.remove(), 2800); }
 function setResponseStatus(node, metadata = {}) { node.classList.remove("generating", "error"); node.dataset.complete = "1"; if (metadata.usage?.total_tokens != null) node.dataset.tokens = String(metadata.usage.total_tokens || 0); if (metadata.cost != null || metadata.usage?.cost != null) node.dataset.cost = String(metadata.cost ?? metadata.usage?.cost); node.dataset.model = metadata.model || state.session?.model || ""; refreshResponseModelLabels(); }
-function refreshResponseModelLabels() { const statuses = [...$("chat").querySelectorAll('.message.assistant .status[data-complete="1"]')], models = new Set(statuses.map(node => node.dataset.model).filter(Boolean)), showModels = models.size > 1; for (const node of statuses) { const parts = []; if (node.dataset.tokens != null && node.dataset.tokens !== "") parts.push(`${formatCount(node.dataset.tokens)} токенов`); if (node.dataset.cost != null && node.dataset.cost !== "") parts.push(`$${money(node.dataset.cost)}`); if (showModels && node.dataset.model) parts.push(node.dataset.model); node.textContent = parts.join(" · "); } }
+function refreshResponseModelLabels() { const statuses = [...$("chat").querySelectorAll('.message.assistant .status[data-complete="1"]')], models = new Set(statuses.map(node => node.dataset.model).filter(Boolean)), showModels = models.size > 1; for (const node of statuses) { const parts = []; if (node.dataset.tokens != null && node.dataset.tokens !== "") parts.push(`${formatCount(node.dataset.tokens)} токенов`); if (node.dataset.cost != null && node.dataset.cost !== "") parts.push(formatCost(node.dataset.cost)); if (showModels && node.dataset.model) parts.push(node.dataset.model); node.textContent = parts.join(" · "); } }
 
 // While streaming, a cheap state poll repairs the UI if a DONE/STOPPED event was missed.
 async function reconcileGeneration() {
@@ -664,7 +669,7 @@ chrome.runtime.onMessage.addListener(message => {
     const bubble = currentAssistant(); if (bubble) setResponseStatus(bubble.querySelector(".status"), { usage: message.usage, cost: message.requestCost, model: message.model || state.currentResponseModel });
     showRetry();
     const model = message.model || state.session?.model || "";
-    $("meta").textContent = `${state.temporary ? "Временный · " : ""}${model}${model ? " · " : ""}$${money(state.totalCost)}`;
+    updateChatMeta(model);
     syncPrimary();
   }
   if (message.action === "AI_CHAT_STOPPED") { state.generating = false; state.localStartPending = false; state.renderedAnswer = null; scheduleCurrentUpdate(true); finishStatus(state.answer ? "Остановлено · ответ неполный" : "Остановлено"); showRetry(); syncPrimary(); }

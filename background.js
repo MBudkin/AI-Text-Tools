@@ -27,6 +27,10 @@ const DEFAULTS = {
   recentChatsLimit: 6,
   sendOnEnter: true,
   theme: "system",
+  showRub: false,
+  rubDisplay: "both",
+  rubRateSource: "cbr",
+  rubManualRate: 90,
   menuItems: DEFAULT_MENU_ITEMS
 };
 
@@ -140,7 +144,7 @@ async function initializeExtension() {
   if (!stored.defaultPromptModel) migration.defaultPromptModel = stored.apiModel || DEFAULTS.defaultPromptModel;
   if (!stored.quickModel) migration.quickModel = stored.apiModel || DEFAULTS.quickModel;
   if (!stored.menuItems || !stored.menuItems.length) migration.menuItems = DEFAULT_MENU_ITEMS;
-  for (const key of ["apiProvider", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme"]) {
+  for (const key of ["apiProvider", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "showRub", "rubDisplay", "rubRateSource", "rubManualRate"]) {
     if (typeof stored[key] === "undefined") migration[key] = DEFAULTS[key];
   }
   if (Object.keys(migration).length) await storageSet("sync", migration);
@@ -152,8 +156,76 @@ async function initializeExtension() {
   createContextMenus((stored.menuItems && stored.menuItems.length ? stored.menuItems : DEFAULT_MENU_ITEMS));
 }
 
-chrome.runtime.onInstalled.addListener(initializeExtension);
-chrome.runtime.onStartup.addListener(async () => createContextMenus((await getSettings()).menuItems));
+/* USD → RUB rate for cost display. Public sources without API keys; the
+   other one is tried when the selected source fails. */
+const RATE_SOURCES = {
+  cbr: {
+    title: "ЦБ РФ",
+    url: "https://www.cbr-xml-daily.ru/daily_json.js",
+    parse: data => ({ rate: Number(data?.Valute?.USD?.Value) / (Number(data?.Valute?.USD?.Nominal) || 1), date: data?.Date })
+  },
+  "er-api": {
+    title: "ExchangeRate-API",
+    url: "https://open.er-api.com/v6/latest/USD",
+    parse: data => ({ rate: data?.result === "success" ? Number(data?.rates?.RUB) : NaN, date: data?.time_last_update_unix ? new Date(data.time_last_update_unix * 1000).toISOString() : data?.time_last_update_utc })
+  }
+};
+const RATE_ALARM = "usd-rub-rate";
+const RATE_MAX_AGE = 20 * 60 * 60 * 1000;
+
+async function fetchRate(sourceId) {
+  const source = RATE_SOURCES[sourceId];
+  const response = await fetch(source.url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`${source.title}: HTTP ${response.status}`);
+  const { rate, date } = source.parse(await response.json());
+  // Sanity bounds guard against a broken or spoofed response.
+  if (!Number.isFinite(rate) || rate < 1 || rate > 10000) throw new Error(`${source.title}: некорректный курс`);
+  return { rate, date: date || new Date().toISOString(), source: sourceId, fetchedAt: Date.now() };
+}
+
+async function refreshUsdRubRate({ force = false, source = "" } = {}) {
+  const settings = await getSettings();
+  if (!force && !settings.showRub) return null;
+  const selected = source || settings.rubRateSource;
+  if (selected === "manual") return null;
+  const preferred = RATE_SOURCES[selected] ? selected : "cbr";
+  const { usdRubRate } = await storageGet("local", ["usdRubRate"]);
+  if (!force && usdRubRate?.source === preferred && Date.now() - Number(usdRubRate.fetchedAt || 0) < RATE_MAX_AGE) return usdRubRate;
+  const errors = [];
+  for (const sourceId of [preferred, ...Object.keys(RATE_SOURCES).filter(id => id !== preferred)]) {
+    try {
+      const result = await fetchRate(sourceId);
+      await storageSet("local", { usdRubRate: result, usdRubRateError: null });
+      return result;
+    } catch (error) { errors.push(error.message); }
+  }
+  const message = `Не удалось обновить курс: ${errors.join("; ")}`;
+  await storageSet("local", { usdRubRateError: { message, at: Date.now() } }).catch(() => {});
+  throw new Error(message);
+}
+
+// Checked every 6 hours and refreshed once the stored rate is older than 20 h,
+// so the rate stays daily even when the browser was closed at alarm time.
+function scheduleRateRefresh() {
+  chrome.alarms?.create(RATE_ALARM, { delayInMinutes: 1, periodInMinutes: 360 });
+}
+
+chrome.alarms?.onAlarm.addListener(alarm => {
+  if (alarm.name === RATE_ALARM) refreshUsdRubRate().catch(error => console.warn(error.message));
+});
+chrome.storage.onChanged?.addListener((changes, areaName) => {
+  if (areaName === "sync" && (changes.showRub || changes.rubRateSource)) refreshUsdRubRate().catch(error => console.warn(error.message));
+});
+
+chrome.runtime.onInstalled.addListener(async () => {
+  await initializeExtension();
+  scheduleRateRefresh();
+});
+chrome.runtime.onStartup.addListener(async () => {
+  createContextMenus((await getSettings()).menuItems);
+  scheduleRateRefresh();
+  refreshUsdRubRate().catch(error => console.warn(error.message));
+});
 
 async function ensureContentScript(tabId) {
   try {
@@ -1034,6 +1106,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.runtime.sendMessage({ action: "AI_SURFACE_OWNER", sourceTabId: targetTab.id, surfaceOwner: "sidepanel", newChat: true, savedChat: true }).catch(() => {});
         return { ok: true };
       }
+      case "REFRESH_USD_RUB_RATE":
+        return { ok: true, rate: await refreshUsdRubRate({ force: true, source: message.source }) };
       case "STOP_AI_CHAT":
         if (message.tabId || tabId) await stopGeneration(message.tabId || tabId);
         return { ok: true };

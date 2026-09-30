@@ -324,6 +324,47 @@ assert.ok(requests.some(item => JSON.parse(item.init.body).messages.at(-1).conte
 assert.ok(!sentMessages.some(item => item.tabId === 31 && item.message.notice?.includes("обрезан")));
 chrome.tabs.sendMessage = pageSendMessage;
 
+// USD → RUB rate: selected source first, the other one as a fallback, manual needs no request.
+const chatFetch = globalThis.fetch;
+const rateRequests = [];
+let cbrStatus = 200;
+globalThis.fetch = async (url, init) => {
+  if (String(url).includes("cbr-xml-daily")) {
+    rateRequests.push("cbr");
+    return new Response(JSON.stringify({ Date: "2026-09-30T11:30:00+03:00", Valute: { USD: { Nominal: 1, Value: 84.4283 } } }), { status: cbrStatus });
+  }
+  if (String(url).includes("open.er-api.com")) {
+    rateRequests.push("er-api");
+    return new Response(JSON.stringify({ result: "success", time_last_update_unix: 1790726551, rates: { RUB: 84.06 } }), { status: 200 });
+  }
+  return chatFetch(url, init);
+};
+const cbrRate = await new Promise(resolve => messageListener({ action: "REFRESH_USD_RUB_RATE" }, {}, resolve));
+assert.equal(cbrRate.ok, true);
+assert.equal(localData.usdRubRate.rate, 84.4283);
+assert.equal(localData.usdRubRate.source, "cbr");
+cbrStatus = 503;
+const fallbackRate = await new Promise(resolve => messageListener({ action: "REFRESH_USD_RUB_RATE", source: "cbr" }, {}, resolve));
+assert.equal(fallbackRate.rate.source, "er-api", "Falls back to the second source");
+assert.equal(localData.usdRubRate.rate, 84.06);
+const requestsBeforeManual = rateRequests.length;
+await new Promise(resolve => messageListener({ action: "REFRESH_USD_RUB_RATE", source: "manual" }, {}, resolve));
+assert.equal(rateRequests.length, requestsBeforeManual, "Manual rate never hits the network");
+globalThis.fetch = chatFetch;
+assert.ok(manifest.permissions.includes("alarms"));
+
+const commonCode = fs.readFileSync(path.join(root, "common.js"), "utf8");
+const currencyHelpers = [
+  commonCode.match(/function money[\s\S]*?\n}/)[0],
+  commonCode.match(/function rublesEnabled[\s\S]*?\nfunction formatCost[\s\S]*?\n}/)[0]
+].join("\n");
+const makeFormatter = state => new Function(`let currencyState = ${JSON.stringify(state)}; ${currencyHelpers}; return formatCost;`)();
+assert.equal(makeFormatter({ showRub: false, rate: 84 })(0.0041), "$0.0041");
+assert.equal(makeFormatter({ showRub: true, rate: 0 })(0.5), "$0.50", "Without a rate costs stay in dollars");
+assert.equal(makeFormatter({ showRub: true, rubDisplay: "both", rate: 84 })(0.0041), "0,34 ₽ ($0.0041)");
+assert.equal(makeFormatter({ showRub: true, rubDisplay: "rub", rate: 84 })(2), "168,00 ₽");
+assert.equal(makeFormatter({ showRub: true, rubDisplay: "rub", rate: 84 })(0.00001), "0,00084 ₽");
+
 const read = file => fs.readFileSync(path.join(root, file), "utf8");
 const contentSource = read("content.js");
 const commonSource = read("common.js");

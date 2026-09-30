@@ -21,13 +21,17 @@ const DEFAULTS = {
   recentChatsLimit: 6,
   sendOnEnter: true,
   theme: "system",
+  showRub: false,
+  rubDisplay: "both",
+  rubRateSource: "cbr",
+  rubManualRate: 90,
   menuItems: []
 };
 
 let menuItems = [];
 let recentModels = [];
 let modelCatalog = [];
-const ids = ["apiProvider", "apiServer", "apiKey", "defaultPromptModel", "quickModel", "systemPrompt", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme"];
+const ids = ["apiProvider", "apiServer", "apiKey", "defaultPromptModel", "quickModel", "systemPrompt", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "showRub", "rubDisplay", "rubRateSource", "rubManualRate"];
 const byId = id => document.getElementById(id);
 
 const IMPORTABLE_KEYS = new Set([...ids, "apiModel", "menuItems", "recentModels"]);
@@ -65,6 +69,8 @@ async function loadSettings() {
   renderPrompts();
   updateProviderUI();
   updateModelCapabilities();
+  updateCurrencyUI();
+  renderRateStatus();
   if (settings.apiProvider === "openrouter" && settings.apiKey && !modelCatalog.length) setTimeout(() => byId("loadModels").click(), 0);
 }
 
@@ -191,6 +197,8 @@ function collectSettings() {
     recentChatsLimit: number("recentChatsLimit", 0, 20),
     enableCaching: byId("enableCaching").checked, cacheTtl: number("cacheTtl", 1, 86400),
     sendOnEnter: byId("sendOnEnter").value === "true", theme: byId("theme").value,
+    showRub: byId("showRub").checked, rubDisplay: byId("rubDisplay").value, rubRateSource: byId("rubRateSource").value,
+    rubManualRate: byId("rubRateSource").value === "manual" ? number("rubManualRate", 1, 10000) : Number(byId("rubManualRate").value) || DEFAULTS.rubManualRate,
     menuItems: menuItems.map(item => ({ title: item.title, prompt: item.prompt, model: item.model || "", thinking: item.thinking || "default", reasoningMaxTokens: Number(item.reasoningMaxTokens) || 2000 })),
     recentModels: [...new Set([defaultPromptModel, quickModel, ...menuItems.map(item => item.model).filter(Boolean), ...recentModels])].slice(0, 12)
   };
@@ -239,6 +247,51 @@ async function writeSettings(settings) {
   if (typeof apiKey === "string") await chrome.storage.local.set({ apiKey });
   await chrome.storage.sync.remove("apiKey");
 }
+
+const RATE_SOURCE_TITLES = { cbr: "ЦБ РФ", "er-api": "ExchangeRate-API" };
+
+function updateCurrencyUI() {
+  const manual = byId("rubRateSource").value === "manual";
+  byId("manualRateField").classList.toggle("hidden", !manual);
+  byId("refreshRate").classList.toggle("hidden", manual);
+  byId("rubDisplay").disabled = !byId("showRub").checked;
+  renderRateStatus();
+}
+
+async function renderRateStatus() {
+  const node = byId("rateStatus");
+  node.classList.remove("error");
+  if (byId("rubRateSource").value === "manual") {
+    const rate = Number(byId("rubManualRate").value);
+    node.textContent = rate > 0 ? `Используется ваш курс: 1 $ = ${formatRub(rate)}` : "Укажите курс вручную.";
+    return;
+  }
+  const { usdRubRate, usdRubRateError } = await chrome.storage.local.get(["usdRubRate", "usdRubRateError"]);
+  if (usdRubRate?.rate) {
+    const date = usdRubRate.date ? new Date(usdRubRate.date).toLocaleDateString("ru-RU") : "";
+    const fetched = new Date(usdRubRate.fetchedAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    node.textContent = `1 $ = ${formatRub(usdRubRate.rate)} · ${RATE_SOURCE_TITLES[usdRubRate.source] || usdRubRate.source}${date ? ` на ${date}` : ""} · проверено ${fetched}`;
+  } else node.textContent = "Курс ещё не загружен. Он обновится автоматически после включения или по кнопке.";
+  if (usdRubRateError?.message && (!usdRubRate || usdRubRateError.at > usdRubRate.fetchedAt)) {
+    node.textContent += ` · ${usdRubRateError.message}`;
+    node.classList.add("error");
+  }
+}
+
+byId("showRub").addEventListener("change", updateCurrencyUI);
+byId("rubRateSource").addEventListener("change", updateCurrencyUI);
+byId("rubManualRate").addEventListener("input", renderRateStatus);
+byId("refreshRate").addEventListener("click", async () => {
+  const button = byId("refreshRate");
+  button.disabled = true; byId("rateStatus").textContent = "Загружаем курс…";
+  try {
+    const result = await chrome.runtime.sendMessage({ action: "REFRESH_USD_RUB_RATE", source: byId("rubRateSource").value });
+    if (!result?.ok) throw new Error(result?.error || "Неизвестная ошибка");
+  } catch (error) { setStatus(error.message, "error"); }
+  button.disabled = false;
+  renderRateStatus();
+});
+chrome.storage.onChanged.addListener((changes, areaName) => { if (areaName === "local" && (changes.usdRubRate || changes.usdRubRateError)) renderRateStatus(); });
 
 function markChanged() { setStatus("Есть несохранённые изменения.", "dirty"); }
 function setStatus(message, type) { const node = byId("status"); node.textContent = message; node.className = type; }

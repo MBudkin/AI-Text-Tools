@@ -162,8 +162,58 @@ function modelPrice(model) {
   if (!model?.pricing || model.pricing.prompt == null) return "";
   const prompt = Number(model.pricing.prompt || 0) * 1_000_000, completion = Number(model.pricing.completion || 0) * 1_000_000;
   if (!prompt && !completion) return "бесплатно";
+  if (rublesEnabled()) return `${formatRub(prompt)} / ${formatRub(completion)}`;
   return `$${prompt.toFixed(2)} / $${completion.toFixed(2)}`;
 }
+
+/* ---------- Currency ---------- */
+
+// OpenRouter reports costs in USD; optionally show them in rubles using the
+// daily rate that background.js stores in storage.local (or a manual rate).
+const CURRENCY_CACHE_KEY = "aitt-currency";
+const CURRENCY_SETTINGS = ["showRub", "rubDisplay", "rubRateSource", "rubManualRate"];
+let currencyState = readCachedCurrency();
+
+function readCachedCurrency() {
+  try { return JSON.parse(localStorage.getItem(CURRENCY_CACHE_KEY)) || {}; } catch { return {}; }
+}
+
+function effectiveRubRate(settings, stored) {
+  const rate = settings.rubRateSource === "manual" ? Number(settings.rubManualRate) : Number(stored?.rate);
+  return Number.isFinite(rate) && rate > 0 ? rate : 0;
+}
+
+async function loadCurrencyState() {
+  try {
+    const [settings, local] = await Promise.all([chrome.storage.sync.get(CURRENCY_SETTINGS), chrome.storage.local.get("usdRubRate")]);
+    const next = { showRub: Boolean(settings.showRub), rubDisplay: settings.rubDisplay || "both", rate: effectiveRubRate(settings, local.usdRubRate) };
+    const changed = JSON.stringify(next) !== JSON.stringify(currencyState);
+    currencyState = next;
+    try { localStorage.setItem(CURRENCY_CACHE_KEY, JSON.stringify(next)); } catch {}
+    if (changed) document.dispatchEvent(new CustomEvent("aitt-currencychange"));
+  } catch {}
+}
+
+function rublesEnabled() { return Boolean(currencyState.showRub && currencyState.rate > 0); }
+
+function formatRub(rubles) {
+  const value = Number(rubles) || 0;
+  if (Math.abs(value) >= 1) return `${value.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`;
+  return `${money(value).replace(".", ",")} ₽`;
+}
+
+// Cost label for a USD amount according to the currency settings.
+function formatCost(usd) {
+  const dollars = `$${money(usd)}`;
+  if (!rublesEnabled()) return dollars;
+  const rubles = formatRub(Number(usd) * currencyState.rate);
+  return currencyState.rubDisplay === "rub" ? rubles : `${rubles} (${dollars})`;
+}
+
+loadCurrencyState();
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if ((areaName === "sync" && CURRENCY_SETTINGS.some(key => changes[key])) || (areaName === "local" && changes.usdRubRate)) loadCurrencyState();
+});
 
 /* ---------- Markdown ---------- */
 

@@ -28,6 +28,7 @@
     .prompt-list{display:grid;gap:12px;margin-top:16px}.prompt-card{padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)}.prompt-head{display:flex;align-items:center;gap:8px}.prompt-head input{margin:0;font-weight:650}.prompt-actions{display:flex;gap:4px}.prompt-actions button{min-width:34px;padding:0 9px}.prompt-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(180px,1fr);gap:12px;margin-top:10px}.prompt-grid textarea{min-height:112px;margin:0}.stack{display:grid;gap:8px}.stack input,.stack select{margin:0}
     code{padding:2px 6px;border-radius:5px;color:var(--inline-code-text);background:var(--inline-code-bg);font:12px var(--mono)}.tokens{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.info{padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}.info strong{display:block;margin-bottom:3px}.info span{color:var(--text-3);font-size:12px}
     #savebar{position:sticky;bottom:12px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding:10px 12px 10px 16px;border:1px solid var(--border-strong);border-radius:12px;background:color-mix(in srgb,var(--surface) 92%,transparent);box-shadow:var(--shadow);backdrop-filter:blur(10px)}#status{color:var(--text-3);font-size:12px}#status.ok{color:var(--success)}#status.error{color:var(--danger-text)}#status.dirty{color:var(--warning-text)}
+    .rate-box{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2)}.rate-box .help{margin:0;font-size:12.5px}.rate-box .help.error{color:var(--danger-text)}
     .model-loader{display:flex;flex-direction:column;justify-content:flex-end;gap:6px}.model-loader button{width:100%;height:38px}
     @media(max-width:800px){.layout{display:block;padding:15px}aside{position:static;margin-bottom:20px}nav{display:flex;overflow:auto}.grid,.prompt-grid,.info-grid{grid-template-columns:1fr}section{padding:16px}}
   </style>
@@ -35,7 +36,7 @@
 <body>
   <div class="layout">
     <aside><div class="brand"><img src="icon48.png" alt=""><div><h1>AI Text Tools</h1><div class="version" id="version">Manifest V3</div></div></div><nav>
-      <a href="#connection">Подключение</a><a href="#behavior">Модели и поведение</a><a href="#prompts">Промпты</a><a href="#page">Страница и кэш</a><a href="#about">Возможности</a><a href="history.html" target="_blank">История ↗</a>
+      <a href="#connection">Подключение</a><a href="#behavior">Модели и поведение</a><a href="#prompts">Промпты</a><a href="#page">Страница и кэш</a><a href="#currency">Валюта</a><a href="#about">Возможности</a><a href="history.html" target="_blank">История ↗</a>
     </nav></aside>
     <main>
       <section id="connection"><h2>Подключение API</h2><p class="lead">OpenRouter с расширенной интеграцией или другой совместимый с OpenAI Chat Completions API.</p><div class="grid">
@@ -70,6 +71,14 @@
         <label>Ширина отдельного окна, px<input id="chatWindowWidth" type="number" min="420" max="1800" step="10"><span class="help">Начальная ширина при обычной ширине браузера.</span></label>
         <label>Ширина окна при узком браузере, px<input id="chatWindowCompactWidth" type="number" min="420" max="1200" step="10"><span class="help">Используется, когда основное окно браузера уже 900 px.</span></label>
         <label class="check full"><input id="rememberChatWindowWidth" type="checkbox"><span><strong>Запоминать изменённую ширину отдельного окна</strong><span class="help">Ручная ширина запоминается отдельно для обычного и узкого окна браузера. Если выключено, всегда используются значения выше.</span></span></label>
+      </div></section>
+
+      <section id="currency"><h2>Стоимость в рублях</h2><p class="lead">OpenRouter считает стоимость в долларах. Её можно показывать в рублях по курсу, который обновляется раз в день.</p><div class="grid">
+        <label class="check full"><input id="showRub" type="checkbox"><span><strong>Показывать стоимость в рублях</strong><span class="help">Меняет подписи стоимости в чате, popup, истории и ценах моделей. Сами запросы и расчёты не меняются.</span></span></label>
+        <label>Формат<select id="rubDisplay"><option value="both">Рубли и доллары: 0,35 ₽ ($0.0041)</option><option value="rub">Только рубли: 0,35 ₽</option></select></label>
+        <label>Источник курса<select id="rubRateSource"><option value="cbr">ЦБ РФ (cbr-xml-daily.ru)</option><option value="er-api">ExchangeRate-API (open.er-api.com)</option><option value="manual">Задать вручную</option></select><span class="help">Если выбранный источник недоступен, используется другой.</span></label>
+        <label id="manualRateField">Курс вручную, ₽ за $1<input id="rubManualRate" type="number" min="1" max="10000" step="0.01"></label>
+        <div class="rate-box full" id="rateBox"><span class="help" id="rateStatus">Курс ещё не загружен.</span><button id="refreshRate" type="button">Обновить курс сейчас</button></div>
       </div></section>
 
       <section id="about"><h2>Что доступно</h2><p class="lead">Основные сценарии и шаблоны, которые можно использовать в промптах.</p><div class="info-grid">

@@ -1,6 +1,7 @@
 let chats = [];
 let targetTabId = null;
 let renderAsMarkdown = true;
+let historyDisabled = false;
 let searchTimer = null;
 const selectedIds = new Set();
 const container = document.getElementById("history");
@@ -16,13 +17,13 @@ document.getElementById("imageViewerClose").innerHTML = icon("x");
 bindThemeButton(document.getElementById("theme"));
 
 document.addEventListener("DOMContentLoaded", init);
-search.addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(render, 150); });
+search.addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => render(historyDisabled), 150); });
 deleteSelected.addEventListener("click", () => deleteChats([...selectedIds]));
 viewMode.addEventListener("click", async () => {
   renderAsMarkdown = !renderAsMarkdown;
   updateViewMode();
   await chrome.storage.local.set({ historyViewMode: renderAsMarkdown ? "markdown" : "text" });
-  render();
+  render(historyDisabled);
 });
 document.getElementById("imageViewerClose").addEventListener("click", closeImageViewer);
 imageViewer.addEventListener("click", event => { if (event.target === imageViewer) closeImageViewer(); });
@@ -53,7 +54,8 @@ async function loadHistory() {
   if (settings.historyLimit === 0) chats = [];
   const availableIds = new Set(chats.map(chat => chat.id));
   for (const id of selectedIds) if (!availableIds.has(id)) selectedIds.delete(id);
-  render(settings.historyLimit === 0);
+  historyDisabled = settings.historyLimit === 0;
+  render(historyDisabled);
 }
 
 function migrateLegacyHistory(history) {
@@ -80,7 +82,7 @@ function renderChat(chat) {
   const head = document.createElement("div"); head.className = "entry-head";
   const select = document.createElement("input"); select.type = "checkbox"; select.className = "chat-select"; select.checked = selectedIds.has(chat.id); select.title = "Выбрать чат"; select.setAttribute("aria-label", `Выбрать чат ${chat.title || "Чат"}`); select.addEventListener("change", () => { if (select.checked) selectedIds.add(chat.id); else selectedIds.delete(chat.id); updateSelectionUI(); }); head.appendChild(select);
   const title = document.createElement("strong"); title.textContent = chat.title || "Чат"; head.appendChild(title);
-  addPill(head, chat.model || "Модель не указана"); addPill(head, new Date(chat.updatedAt || Date.now()).toLocaleString("ru-RU")); addPill(head, `$${money(chat.totalCost)}`);
+  addPill(head, chat.model || "Модель не указана"); addPill(head, new Date(chat.updatedAt || Date.now()).toLocaleString("ru-RU")); addPill(head, formatCost(chat.totalCost));
   const open = document.createElement("button"); open.type = "button"; open.className = "btn"; open.innerHTML = `${icon("panel")}Открыть`; open.title = "Продолжить чат в боковой панели"; open.addEventListener("click", () => openChat(chat.id)); head.appendChild(open);
   head.appendChild(iconButton("trash", `Удалить чат «${chat.title || "Чат"}»`, () => deleteChats([chat.id]), "icon-btn"));
   const body = document.createElement("div"); body.className = "cell";
@@ -91,7 +93,7 @@ function renderChat(chat) {
   for (const message of chat.messages || []) {
     if (message.role === "system") continue;
     const block = document.createElement("div"); block.className = `turn ${message.role}`;
-    const label = document.createElement("div"); label.className = "label"; label.textContent = message.role === "user" ? "Запрос" : `Ответ AI${message.interrupted ? " · неполный" : ""}${message.cost != null || message.usage?.cost != null ? ` · $${money(message.cost ?? message.usage?.cost)}` : ""}${showResponseModels && (message.model || chat.model) ? ` · ${message.model || chat.model}` : ""}`;
+    const label = document.createElement("div"); label.className = "label"; label.textContent = message.role === "user" ? "Запрос" : `Ответ AI${message.interrupted ? " · неполный" : ""}${message.cost != null || message.usage?.cost != null ? ` · ${formatCost(message.cost ?? message.usage?.cost)}` : ""}${showResponseModels && (message.model || chat.model) ? ` · ${message.model || chat.model}` : ""}`;
     const messageBody = renderMessage(message.displayText || contentText(message.content)); block.append(label, messageBody);
     const imageCount = Number(message.imageCount) || countMessageImages(message.content);
     const imageUrls = messageImageUrls(message);
@@ -155,3 +157,5 @@ function openImageViewer(url, caption) { imageViewerImage.src = url; imageViewer
 function closeImageViewer() { imageViewer.classList.add("hidden"); imageViewerImage.removeAttribute("src"); }
 function addPill(parent, text) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = text; parent.appendChild(pill); }
 function toast(text) { const node = document.createElement("div"); node.className = "toast"; node.textContent = text; document.getElementById("toasts").append(node); setTimeout(() => node.remove(), 2400); }
+
+document.addEventListener("aitt-currencychange", () => render(historyDisabled));
