@@ -61,7 +61,8 @@ globalThis.chrome = {
   scripting: { insertCSS: async () => {}, executeScript: async () => {} },
   sidePanel: { open: async () => {}, close: async () => { sidePanelCloseCalls++; }, setOptions: async () => {} },
   windows: { onRemoved: new ChromeEvent(), getCurrent: async () => ({ id: 1, width: 1200 }), create: async () => ({ id: 99 }) },
-  storage: { sync: area(syncData), local: area(localData), session: area(sessionData) }
+  storage: { sync: area(syncData), local: area(localData), session: area(sessionData) },
+  alarms: { onAlarm: new ChromeEvent(), created: [], cleared: [], create(name) { this.created.push(name); }, clear(name) { this.cleared.push(name); } }
 };
 
 await import(`${pathToFileURL(path.join(root, "background.js"))}?smoke=${Date.now()}`);
@@ -75,6 +76,8 @@ assert.ok(createdMenus.some(item => item.id === "ai-ask-selection"));
 assert.ok(createdMenus.some(item => item.id === "ai-summarize-page"));
 assert.equal(syncData.quickModel, "openrouter/auto");
 assert.equal(syncData.sidePanelTabBehavior, "keep-current");
+assert.ok(chrome.alarms.created.includes("daily-refresh"), "Daily refresh alarm is scheduled");
+assert.ok(chrome.alarms.cleared.includes("usd-rub-rate"), "Legacy rate alarm is removed");
 
 const originalQuery = chrome.tabs.query;
 const originalSendMessage = chrome.tabs.sendMessage;
@@ -350,6 +353,27 @@ assert.equal(localData.usdRubRate.rate, 84.06);
 const requestsBeforeManual = rateRequests.length;
 await new Promise(resolve => messageListener({ action: "REFRESH_USD_RUB_RATE", source: "manual" }, {}, resolve));
 assert.equal(rateRequests.length, requestsBeforeManual, "Manual rate never hits the network");
+
+// The daily alarm refetches the OpenRouter catalog only once it is older than 20 h.
+let catalogRequests = 0;
+globalThis.fetch = async (url, init) => {
+  if (!init?.body && String(url).includes("/models")) {
+    catalogRequests++;
+    return new Response(JSON.stringify({ data: [{ id: "fresh/model", name: "Fresh", pricing: { prompt: "0.000001", completion: "0.000002" } }] }), { status: 200 });
+  }
+  return chatFetch(url, init);
+};
+const fireDailyAlarm = async () => { chrome.alarms.onAlarm.listeners.forEach(listener => listener({ name: "daily-refresh" })); await new Promise(resolve => setTimeout(resolve, 30)); };
+localData.openRouterModelsUpdatedAt = Date.now() - 60 * 60 * 1000;
+await fireDailyAlarm();
+assert.equal(catalogRequests, 0, "A fresh catalog is not refetched");
+const catalogBeforeRefresh = localData.openRouterModels;
+localData.openRouterModelsUpdatedAt = Date.now() - 21 * 60 * 60 * 1000;
+await fireDailyAlarm();
+assert.equal(catalogRequests, 1, "A day-old catalog is refetched");
+assert.deepEqual(localData.openRouterModels.map(model => model.id), ["fresh/model"]);
+assert.ok(Date.now() - localData.openRouterModelsUpdatedAt < 5000);
+localData.openRouterModels = catalogBeforeRefresh;
 globalThis.fetch = chatFetch;
 assert.ok(manifest.permissions.includes("alarms"));
 
@@ -364,6 +388,17 @@ assert.equal(makeFormatter({ showRub: true, rate: 0 })(0.5), "$0.50", "Without a
 assert.equal(makeFormatter({ showRub: true, rubDisplay: "both", rate: 84 })(0.0041), "0,34 ₽ ($0.0041)");
 assert.equal(makeFormatter({ showRub: true, rubDisplay: "rub", rate: 84 })(2), "168,00 ₽");
 assert.equal(makeFormatter({ showRub: true, rubDisplay: "rub", rate: 84 })(0.00001), "0,00084 ₽");
+assert.equal(makeFormatter({ showRub: true, rubDisplay: "rub", rate: 84, places: { chat: false } })(2, "chat"), "$2.00", "Rubles can be turned off per place");
+assert.equal(makeFormatter({ showRub: true, rubDisplay: "rub", rate: 84, places: { chat: false } })(2, "popup"), "168,00 ₽");
+
+// Model prices are per 1M tokens and must be converted with the rate.
+const priceSource = commonCode.match(/function modelPrice[\s\S]*?\n}/)[0];
+const makePricer = state => new Function(`let currencyState = ${JSON.stringify(state)}; ${currencyHelpers}; ${priceSource}; return modelPrice;`)();
+const pricedModel = { pricing: { prompt: "0.000003", completion: "0.000015" } };
+assert.equal(makePricer({ showRub: false, rate: 84 })(pricedModel), "$3.00 / $15.00");
+assert.equal(makePricer({ showRub: true, rate: 84 })(pricedModel).replace(/\s/g, " "), "252,00 ₽ / 1 260,00 ₽");
+assert.equal(makePricer({ showRub: true, rate: 84, places: { models: false } })(pricedModel), "$3.00 / $15.00");
+assert.equal(makePricer({ showRub: true, rate: 84 })({ pricing: { prompt: "0", completion: "0" } }), "бесплатно");
 
 // Favorite models are pinned above recent ones, which are above the catalog.
 const groupSource = commonCode.match(/function groupModels[\s\S]*?\n}/)[0];

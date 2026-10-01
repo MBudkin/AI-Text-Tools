@@ -31,6 +31,10 @@ const DEFAULTS = {
   rubDisplay: "both",
   rubRateSource: "cbr",
   rubManualRate: 90,
+  rubInChat: true,
+  rubInPopup: true,
+  rubInHistory: true,
+  rubInModels: true,
   menuItems: DEFAULT_MENU_ITEMS
 };
 
@@ -97,7 +101,7 @@ async function fetchOpenRouterModels(credentials = {}) {
     reasoning: model.reasoning || null,
     pricing: model.pricing || {}
   }));
-  await storageSet("local", { openRouterModels: models, openRouterModelsUpdatedAt: Date.now() });
+  await storageSet("local", { openRouterModels: models, openRouterModelsUpdatedAt: Date.now(), openRouterModelsError: null });
   return models;
 }
 
@@ -144,7 +148,7 @@ async function initializeExtension() {
   if (!stored.defaultPromptModel) migration.defaultPromptModel = stored.apiModel || DEFAULTS.defaultPromptModel;
   if (!stored.quickModel) migration.quickModel = stored.apiModel || DEFAULTS.quickModel;
   if (!stored.menuItems || !stored.menuItems.length) migration.menuItems = DEFAULT_MENU_ITEMS;
-  for (const key of ["apiProvider", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "showRub", "rubDisplay", "rubRateSource", "rubManualRate"]) {
+  for (const key of ["apiProvider", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "showRub", "rubDisplay", "rubRateSource", "rubManualRate", "rubInChat", "rubInPopup", "rubInHistory", "rubInModels"]) {
     if (typeof stored[key] === "undefined") migration[key] = DEFAULTS[key];
   }
   if (Object.keys(migration).length) await storageSet("sync", migration);
@@ -170,8 +174,9 @@ const RATE_SOURCES = {
     parse: data => ({ rate: data?.result === "success" ? Number(data?.rates?.RUB) : NaN, date: data?.time_last_update_unix ? new Date(data.time_last_update_unix * 1000).toISOString() : data?.time_last_update_utc })
   }
 };
-const RATE_ALARM = "usd-rub-rate";
-const RATE_MAX_AGE = 20 * 60 * 60 * 1000;
+const DAILY_ALARM = "daily-refresh";
+const LEGACY_RATE_ALARM = "usd-rub-rate";
+const DAILY_MAX_AGE = 20 * 60 * 60 * 1000;
 
 async function fetchRate(sourceId) {
   const source = RATE_SOURCES[sourceId];
@@ -190,7 +195,7 @@ async function refreshUsdRubRate({ force = false, source = "" } = {}) {
   if (selected === "manual") return null;
   const preferred = RATE_SOURCES[selected] ? selected : "cbr";
   const { usdRubRate } = await storageGet("local", ["usdRubRate"]);
-  if (!force && usdRubRate?.source === preferred && Date.now() - Number(usdRubRate.fetchedAt || 0) < RATE_MAX_AGE) return usdRubRate;
+  if (!force && usdRubRate?.source === preferred && Date.now() - Number(usdRubRate.fetchedAt || 0) < DAILY_MAX_AGE) return usdRubRate;
   const errors = [];
   for (const sourceId of [preferred, ...Object.keys(RATE_SOURCES).filter(id => id !== preferred)]) {
     try {
@@ -204,27 +209,48 @@ async function refreshUsdRubRate({ force = false, source = "" } = {}) {
   throw new Error(message);
 }
 
-// Checked every 6 hours and refreshed once the stored rate is older than 20 h,
-// so the rate stays daily even when the browser was closed at alarm time.
-function scheduleRateRefresh() {
-  chrome.alarms?.create(RATE_ALARM, { delayInMinutes: 1, periodInMinutes: 360 });
+// Keeps the OpenRouter catalog (models and prices) at most a day old.
+async function refreshModelCatalog({ force = false } = {}) {
+  const settings = await getSettings();
+  if (settings.apiProvider !== "openrouter") return null;
+  const { openRouterModelsUpdatedAt = 0 } = await storageGet("local", ["openRouterModelsUpdatedAt"]);
+  if (!force && Date.now() - Number(openRouterModelsUpdatedAt) < DAILY_MAX_AGE) return null;
+  try {
+    return await fetchOpenRouterModels();
+  } catch (error) {
+    await storageSet("local", { openRouterModelsError: { message: error.message, at: Date.now() } }).catch(() => {});
+    throw error;
+  }
+}
+
+function runDailyRefresh() {
+  refreshUsdRubRate().catch(error => console.warn(error.message));
+  refreshModelCatalog().catch(error => console.warn(error.message));
+}
+
+// Checked every 6 hours; the rate and the catalog are refetched once they are
+// older than 20 h, so both stay daily even if the browser was closed at alarm time.
+function scheduleDailyRefresh() {
+  chrome.alarms?.clear(LEGACY_RATE_ALARM);
+  chrome.alarms?.create(DAILY_ALARM, { delayInMinutes: 1, periodInMinutes: 360 });
 }
 
 chrome.alarms?.onAlarm.addListener(alarm => {
-  if (alarm.name === RATE_ALARM) refreshUsdRubRate().catch(error => console.warn(error.message));
+  if (alarm.name === DAILY_ALARM) runDailyRefresh();
 });
 chrome.storage.onChanged?.addListener((changes, areaName) => {
   if (areaName === "sync" && (changes.showRub || changes.rubRateSource)) refreshUsdRubRate().catch(error => console.warn(error.message));
+  if (areaName === "sync" && changes.apiProvider) refreshModelCatalog().catch(error => console.warn(error.message));
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
   await initializeExtension();
-  scheduleRateRefresh();
+  scheduleDailyRefresh();
 });
 chrome.runtime.onStartup.addListener(async () => {
   createContextMenus((await getSettings()).menuItems);
-  scheduleRateRefresh();
-  refreshUsdRubRate().catch(error => console.warn(error.message));
+  scheduleDailyRefresh();
+  runDailyRefresh();
 });
 
 async function ensureContentScript(tabId) {

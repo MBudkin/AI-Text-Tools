@@ -79,7 +79,7 @@ function loadRecentChats() {
       const row = document.createElement("div"); row.className = "chat-row";
       const button = document.createElement("button"); button.type = "button"; button.className = "chat";
       const title = document.createElement("strong"); title.textContent = chat.title || "Чат";
-      const meta = document.createElement("small"); meta.textContent = [relativeTime(chat.updatedAt), chat.model, formatCost(chat.totalCost)].filter(Boolean).join(" · ");
+      const meta = document.createElement("small"); meta.textContent = [relativeTime(chat.updatedAt), chat.model, formatCost(chat.totalCost, "popup")].filter(Boolean).join(" · ");
       button.append(title, meta);
       button.addEventListener("click", () => {
         statusNode.textContent = "";

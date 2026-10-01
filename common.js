@@ -163,7 +163,8 @@ function modelPrice(model) {
   if (!model?.pricing || model.pricing.prompt == null) return "";
   const prompt = Number(model.pricing.prompt || 0) * 1_000_000, completion = Number(model.pricing.completion || 0) * 1_000_000;
   if (!prompt && !completion) return "бесплатно";
-  if (rublesEnabled()) return `${formatRub(prompt)} / ${formatRub(completion)}`;
+  // Per-1M-token prices: the picker row is narrow, so rubles replace dollars here.
+  if (rublesEnabled("models")) return `${formatRub(prompt * currencyState.rate)} / ${formatRub(completion * currencyState.rate)}`;
   return `$${prompt.toFixed(2)} / $${completion.toFixed(2)}`;
 }
 
@@ -172,7 +173,9 @@ function modelPrice(model) {
 // OpenRouter reports costs in USD; optionally show them in rubles using the
 // daily rate that background.js stores in storage.local (or a manual rate).
 const CURRENCY_CACHE_KEY = "aitt-currency";
-const CURRENCY_SETTINGS = ["showRub", "rubDisplay", "rubRateSource", "rubManualRate"];
+// Where rubles are shown; each place maps to a boolean setting (default on).
+const RUB_PLACES = { chat: "rubInChat", popup: "rubInPopup", history: "rubInHistory", models: "rubInModels" };
+const CURRENCY_SETTINGS = ["showRub", "rubDisplay", "rubRateSource", "rubManualRate", ...Object.values(RUB_PLACES)];
 let currencyState = readCachedCurrency();
 
 function readCachedCurrency() {
@@ -187,7 +190,8 @@ function effectiveRubRate(settings, stored) {
 async function loadCurrencyState() {
   try {
     const [settings, local] = await Promise.all([chrome.storage.sync.get(CURRENCY_SETTINGS), chrome.storage.local.get("usdRubRate")]);
-    const next = { showRub: Boolean(settings.showRub), rubDisplay: settings.rubDisplay || "both", rate: effectiveRubRate(settings, local.usdRubRate) };
+    const places = Object.fromEntries(Object.entries(RUB_PLACES).map(([place, key]) => [place, settings[key] !== false]));
+    const next = { showRub: Boolean(settings.showRub), rubDisplay: settings.rubDisplay || "both", rate: effectiveRubRate(settings, local.usdRubRate), places };
     const changed = JSON.stringify(next) !== JSON.stringify(currencyState);
     currencyState = next;
     try { localStorage.setItem(CURRENCY_CACHE_KEY, JSON.stringify(next)); } catch {}
@@ -195,7 +199,9 @@ async function loadCurrencyState() {
   } catch {}
 }
 
-function rublesEnabled() { return Boolean(currencyState.showRub && currencyState.rate > 0); }
+function rublesEnabled(place) {
+  return Boolean(currencyState.showRub && currencyState.rate > 0 && (!place || currencyState.places?.[place] !== false));
+}
 
 function formatRub(rubles) {
   const value = Number(rubles) || 0;
@@ -204,9 +210,9 @@ function formatRub(rubles) {
 }
 
 // Cost label for a USD amount according to the currency settings.
-function formatCost(usd) {
+function formatCost(usd, place) {
   const dollars = `$${money(usd)}`;
-  if (!rublesEnabled()) return dollars;
+  if (!rublesEnabled(place)) return dollars;
   const rubles = formatRub(Number(usd) * currencyState.rate);
   return currencyState.rubDisplay === "rub" ? rubles : `${rubles} (${dollars})`;
 }
@@ -392,6 +398,7 @@ loadModelPrefs();
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "sync" && (changes.favoriteModels || changes.recentModels)) loadModelPrefs();
 });
+document.addEventListener("aitt-currencychange", () => modelPickers.forEach(picker => picker.refresh()));
 
 /* ---------- Searchable model picker ---------- */
 

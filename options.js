@@ -25,13 +25,17 @@ const DEFAULTS = {
   rubDisplay: "both",
   rubRateSource: "cbr",
   rubManualRate: 90,
+  rubInChat: true,
+  rubInPopup: true,
+  rubInHistory: true,
+  rubInModels: true,
   menuItems: []
 };
 
 let menuItems = [];
 let recentModels = [];
 let modelCatalog = [];
-const ids = ["apiProvider", "apiServer", "apiKey", "defaultPromptModel", "quickModel", "systemPrompt", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "showRub", "rubDisplay", "rubRateSource", "rubManualRate"];
+const ids = ["apiProvider", "apiServer", "apiKey", "defaultPromptModel", "quickModel", "systemPrompt", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "showRub", "rubDisplay", "rubRateSource", "rubManualRate", "rubInChat", "rubInPopup", "rubInHistory", "rubInModels"];
 const byId = id => document.getElementById(id);
 
 const IMPORTABLE_KEYS = new Set([...ids, "apiModel", "menuItems", "recentModels", "favoriteModels"]);
@@ -62,9 +66,8 @@ async function loadSettings() {
   }
   menuItems = Array.isArray(settings.menuItems) ? settings.menuItems.map(item => ({ ...item })) : [];
   recentModels = settings.recentModels || [];
-  const catalogData = await chrome.storage.local.get(["openRouterModels", "openRouterModelsUpdatedAt"]);
-  modelCatalog = catalogData.openRouterModels || [];
-  if (modelCatalog.length) byId("modelsStatus").textContent = `${modelCatalog.length} моделей · обновлено ${new Date(catalogData.openRouterModelsUpdatedAt || Date.now()).toLocaleString("ru-RU")}`;
+  modelCatalog = (await chrome.storage.local.get("openRouterModels")).openRouterModels || [];
+  renderModelsStatus();
   renderRecentModels();
   renderPrompts();
   updateProviderUI();
@@ -80,10 +83,9 @@ function renderRecentModels() {
 }
 
 function modelOptionLabel(model) {
-  const prompt = Number(model.pricing?.prompt || 0) * 1_000_000;
-  const completion = Number(model.pricing?.completion || 0) * 1_000_000;
   const flags = [model.input_modalities?.includes("image") ? "изображения" : "", model.reasoning?.mandatory ? "reasoning обязателен" : model.supported_parameters?.includes("reasoning") ? "reasoning" : ""].filter(Boolean).join(", ");
-  return `${model.name || model.id} · $${prompt.toFixed(2)}/$${completion.toFixed(2)} за 1M${flags ? ` · ${flags}` : ""}`;
+  const price = modelPrice(model);
+  return `${model.name || model.id}${price ? ` · ${price} за 1M` : ""}${flags ? ` · ${flags}` : ""}`;
 }
 
 function updateProviderUI() {
@@ -118,9 +120,30 @@ byId("loadModels").addEventListener("click", async () => {
     const result = await chrome.runtime.sendMessage({ action: "FETCH_OPENROUTER_MODELS", apiServer: byId("apiServer").value.trim(), apiKey: byId("apiKey").value.trim() });
     if (!result?.ok) throw new Error(result?.error || "Неизвестная ошибка");
     modelCatalog = result.models; renderRecentModels(); renderPrompts(); updateModelCapabilities();
-    byId("modelsStatus").textContent = `${modelCatalog.length} моделей загружено.`;
+    renderModelsStatus();
   } catch (error) { byId("modelsStatus").textContent = error.message; }
 });
+
+async function renderModelsStatus() {
+  const node = byId("modelsStatus");
+  const { openRouterModelsUpdatedAt, openRouterModelsError } = await chrome.storage.local.get(["openRouterModelsUpdatedAt", "openRouterModelsError"]);
+  node.classList.remove("error");
+  node.textContent = modelCatalog.length
+    ? `${modelCatalog.length} моделей · обновлено ${new Date(openRouterModelsUpdatedAt || Date.now()).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · обновляется автоматически раз в день`
+    : "Каталог моделей ещё не загружен. Он загрузится автоматически или по кнопке.";
+  if (openRouterModelsError?.message && openRouterModelsError.at > Number(openRouterModelsUpdatedAt || 0)) {
+    node.textContent += ` · ${openRouterModelsError.message}`;
+    node.classList.add("error");
+  }
+}
+
+// The background refreshes the catalog daily; pick it up without a reload.
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !(changes.openRouterModels || changes.openRouterModelsError)) return;
+  if (changes.openRouterModels) { modelCatalog = changes.openRouterModels.newValue || []; renderRecentModels(); updateModelCapabilities(); }
+  renderModelsStatus();
+});
+document.addEventListener("aitt-currencychange", renderRecentModels);
 
 function renderPrompts() {
   const list = byId("promptList");
@@ -198,6 +221,7 @@ function collectSettings() {
     enableCaching: byId("enableCaching").checked, cacheTtl: number("cacheTtl", 1, 86400),
     sendOnEnter: byId("sendOnEnter").value === "true", theme: byId("theme").value,
     showRub: byId("showRub").checked, rubDisplay: byId("rubDisplay").value, rubRateSource: byId("rubRateSource").value,
+    rubInChat: byId("rubInChat").checked, rubInPopup: byId("rubInPopup").checked, rubInHistory: byId("rubInHistory").checked, rubInModels: byId("rubInModels").checked,
     rubManualRate: byId("rubRateSource").value === "manual" ? number("rubManualRate", 1, 10000) : Number(byId("rubManualRate").value) || DEFAULTS.rubManualRate,
     menuItems: menuItems.map(item => ({ title: item.title, prompt: item.prompt, model: item.model || "", thinking: item.thinking || "default", reasoningMaxTokens: Number(item.reasoningMaxTokens) || 2000 })),
     recentModels: [...new Set([defaultPromptModel, quickModel, ...menuItems.map(item => item.model).filter(Boolean), ...recentModels])].slice(0, 12)
@@ -255,6 +279,7 @@ function updateCurrencyUI() {
   byId("manualRateField").classList.toggle("hidden", !manual);
   byId("refreshRate").classList.toggle("hidden", manual);
   byId("rubDisplay").disabled = !byId("showRub").checked;
+  byId("rubPlaces").disabled = !byId("showRub").checked;
   renderRateStatus();
 }
 

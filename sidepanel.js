@@ -320,7 +320,7 @@ function beginAssistant() {
 }
 function updateChatMeta(model = state.session?.model || "") {
   if (state.isNew) return;
-  $("meta").textContent = [state.temporary ? "Временный" : "", model, formatCost(state.totalCost)].filter(Boolean).join(" · ");
+  $("meta").textContent = [state.temporary ? "Временный" : "", model, formatCost(state.totalCost, "chat")].filter(Boolean).join(" · ");
 }
 document.addEventListener("aitt-currencychange", () => { refreshResponseModelLabels(); updateChatMeta(); });
 function showRetry() { currentAssistant()?.closest(".message-row")?.querySelector("[data-retry]")?.classList.remove("hidden"); }
@@ -526,7 +526,7 @@ async function copyText(text, button = null) {
 }
 function toast(text) { const node = document.createElement("div"); node.className = "toast"; node.textContent = text; $("toasts").append(node); setTimeout(() => node.remove(), 2800); }
 function setResponseStatus(node, metadata = {}) { node.classList.remove("generating", "error"); node.dataset.complete = "1"; if (metadata.usage?.total_tokens != null) node.dataset.tokens = String(metadata.usage.total_tokens || 0); if (metadata.cost != null || metadata.usage?.cost != null) node.dataset.cost = String(metadata.cost ?? metadata.usage?.cost); node.dataset.model = metadata.model || state.session?.model || ""; refreshResponseModelLabels(); }
-function refreshResponseModelLabels() { const statuses = [...$("chat").querySelectorAll('.message.assistant .status[data-complete="1"]')], models = new Set(statuses.map(node => node.dataset.model).filter(Boolean)), showModels = models.size > 1; for (const node of statuses) { const parts = []; if (node.dataset.tokens != null && node.dataset.tokens !== "") parts.push(`${formatCount(node.dataset.tokens)} токенов`); if (node.dataset.cost != null && node.dataset.cost !== "") parts.push(formatCost(node.dataset.cost)); if (showModels && node.dataset.model) parts.push(node.dataset.model); node.textContent = parts.join(" · "); } }
+function refreshResponseModelLabels() { const statuses = [...$("chat").querySelectorAll('.message.assistant .status[data-complete="1"]')], models = new Set(statuses.map(node => node.dataset.model).filter(Boolean)), showModels = models.size > 1; for (const node of statuses) { const parts = []; if (node.dataset.tokens != null && node.dataset.tokens !== "") parts.push(`${formatCount(node.dataset.tokens)} токенов`); if (node.dataset.cost != null && node.dataset.cost !== "") parts.push(formatCost(node.dataset.cost, "chat")); if (showModels && node.dataset.model) parts.push(node.dataset.model); node.textContent = parts.join(" · "); } }
 
 // While streaming, a cheap state poll repairs the UI if a DONE/STOPPED event was missed.
 async function reconcileGeneration() {
@@ -573,6 +573,8 @@ document.addEventListener("dragover", event => { if ([...(event.dataTransfer?.ty
 document.addEventListener("dragleave", event => { if (event.relatedTarget) dragDepth = Math.max(0, dragDepth - 1); else dragDepth = 0; if (!dragDepth) $("dropOverlay").classList.add("hidden"); });
 document.addEventListener("drop", event => { event.preventDefault(); dragDepth = 0; $("dropOverlay").classList.add("hidden"); const files = [...(event.dataTransfer?.files || [])].filter(file => file.type.startsWith("image/")); if (files.length) prepareFiles(files); else toast("Можно перетащить только изображения"); });
 chrome.storage.onChanged?.addListener((changes, areaName) => {
+  // The background refreshes the OpenRouter catalog daily.
+  if (areaName === "local" && changes.openRouterModels) state.modelCatalog = changes.openRouterModels.newValue || [];
   if (areaName !== "sync") return;
   if (changes.sidePanelTabBehavior) state.tabBehavior = changes.sidePanelTabBehavior.newValue || "keep-current";
   if (changes.sendOnEnter) { state.sendOnEnter = changes.sendOnEnter.newValue !== false; updateComposerHint(); }
