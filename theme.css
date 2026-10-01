@@ -190,12 +190,22 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .model-picker { position: fixed; z-index: 80; overflow: auto; padding: 4px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
 .model-option { display: grid; gap: 2px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
 .model-option:hover, .model-option[aria-selected="true"] { background: var(--accent-soft); }
-.model-option-main { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.model-option-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .model-name { overflow: hidden; color: var(--text); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.model-price { flex: 0 0 auto; color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.model-price { flex: 0 0 auto; margin-left: auto; color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
 .model-option-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 .model-id { margin-right: 2px; overflow: hidden; color: var(--text-3); font: 11px/1.4 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .badge { display: inline-flex; align-items: center; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-2); background: var(--surface-2); font-size: 10px; line-height: 16px; }
+.model-group { padding: 8px 8px 3px; color: var(--text-3); font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.model-group:first-child { padding-top: 4px; }
+.model-name + .model-star { margin-left: auto; }
+.model-star { display: inline-grid; flex: 0 0 auto; place-items: center; width: 22px; height: 22px; margin: -3px -4px -3px 0; padding: 0; border: 0; border-radius: 6px; color: var(--text-3); background: transparent; cursor: pointer; opacity: 0; transition: opacity .12s, color .12s; }
+.model-star .icon-svg { width: 14px; height: 14px; }
+.model-option:hover .model-star, .model-option[aria-selected="true"] .model-star, .model-star:focus-visible { opacity: 1; }
+.model-star:hover { color: var(--warning); background: var(--surface-2); }
+.model-star.on { color: var(--warning); opacity: 1; }
+.model-star.on .icon-svg { fill: currentColor; }
+@media (hover: none) { .model-star { opacity: 1; } }
 .model-empty { padding: 10px; color: var(--text-3); font-size: 12px; }
 
 @media (prefers-reduced-motion: reduce) {

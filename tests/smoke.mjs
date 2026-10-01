@@ -365,6 +365,19 @@ assert.equal(makeFormatter({ showRub: true, rubDisplay: "both", rate: 84 })(0.00
 assert.equal(makeFormatter({ showRub: true, rubDisplay: "rub", rate: 84 })(2), "168,00 ₽");
 assert.equal(makeFormatter({ showRub: true, rubDisplay: "rub", rate: 84 })(0.00001), "0,00084 ₽");
 
+// Favorite models are pinned above recent ones, which are above the catalog.
+const groupSource = commonCode.match(/function groupModels[\s\S]*?\n}/)[0];
+const makeGrouper = prefs => new Function(`const modelPrefs = ${JSON.stringify(prefs)}; ${groupSource}; return groupModels;`)();
+const pickerCatalog = ["a/one", "b/two", "c/three", "d/four"].map(id => ({ id, name: id }));
+const grouper = makeGrouper({ favorites: ["c/three", "x/custom"], recent: ["b/two", "c/three"] });
+const browse = grouper(pickerCatalog);
+assert.deepEqual(browse.map(group => group.label), ["Избранные", "Недавние", "Все модели"]);
+assert.deepEqual(browse.map(group => group.models.map(model => model.id)), [["c/three", "x/custom"], ["b/two"], ["a/one", "d/four"]], "Favorites outside the catalog stay selectable");
+const search = grouper(pickerCatalog.filter(model => /three|four/.test(model.id)), { searching: true });
+assert.deepEqual(search.map(group => [group.label, group.models.map(model => model.id)]), [["Избранные", ["c/three"]], ["Остальные", ["d/four"]]]);
+assert.deepEqual(makeGrouper({ favorites: [], recent: [] })(pickerCatalog).map(group => group.label), [""], "No headings without favorites or recents");
+assert.equal(grouper(pickerCatalog, { limit: 4 }).flatMap(group => group.models).length, 4);
+
 const read = file => fs.readFileSync(path.join(root, file), "utf8");
 const contentSource = read("content.js");
 const commonSource = read("common.js");

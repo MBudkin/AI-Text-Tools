@@ -79,7 +79,8 @@ const ICONS = {
   sparkles: '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/>',
   settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
-  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  star: '<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>'
 };
 
 function icon(name, className = "") {
@@ -344,6 +345,54 @@ function decorateMarkdownBlocks(root, { onCopy } = {}) {
   });
 }
 
+/* ---------- Favorite and recent models ---------- */
+
+// Starred models are pinned to the top of every model picker; recently used
+// ones follow. Both live in storage.sync so they travel with the profile.
+const modelPrefs = { favorites: [], recent: [] };
+const modelPickers = new Set();
+
+async function loadModelPrefs() {
+  try {
+    const { favoriteModels = [], recentModels = [] } = await chrome.storage.sync.get(["favoriteModels", "recentModels"]);
+    modelPrefs.favorites = Array.isArray(favoriteModels) ? favoriteModels : [];
+    modelPrefs.recent = Array.isArray(recentModels) ? recentModels : [];
+    modelPickers.forEach(picker => picker.refresh());
+  } catch {}
+}
+
+function isFavoriteModel(id) { return modelPrefs.favorites.includes(id); }
+
+async function toggleFavoriteModel(id) {
+  if (!id) return;
+  const next = isFavoriteModel(id) ? modelPrefs.favorites.filter(item => item !== id) : [...modelPrefs.favorites, id];
+  modelPrefs.favorites = next;
+  modelPickers.forEach(picker => picker.refresh());
+  try { await chrome.storage.sync.set({ favoriteModels: next }); } catch { loadModelPrefs(); }
+}
+
+// Splits models into labelled groups: favorites, recent, then everything else.
+// While searching only favorites are lifted; matches keep catalog order.
+function groupModels(models, { searching = false, limit = 80 } = {}) {
+  const byId = new Map(models.map(model => [model.id, model]));
+  const lookup = id => byId.get(id) || (searching ? null : { id, name: id });
+  const favorites = modelPrefs.favorites.map(lookup).filter(Boolean);
+  const used = new Set(favorites.map(model => model.id));
+  const recent = searching ? [] : modelPrefs.recent.filter(id => !used.has(id)).slice(0, 5).map(lookup).filter(Boolean);
+  recent.forEach(model => used.add(model.id));
+  const rest = models.filter(model => !used.has(model.id)).slice(0, Math.max(0, limit - favorites.length - recent.length));
+  const groups = [];
+  if (favorites.length) groups.push({ label: "Избранные", models: favorites });
+  if (recent.length) groups.push({ label: "Недавние", models: recent });
+  if (rest.length) groups.push({ label: groups.length ? (searching ? "Остальные" : "Все модели") : "", models: rest });
+  return groups;
+}
+
+loadModelPrefs();
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "sync" && (changes.favoriteModels || changes.recentModels)) loadModelPrefs();
+});
+
 /* ---------- Searchable model picker ---------- */
 
 // Replaces a <datalist>: with hundreds of OpenRouter models the native list is
@@ -377,7 +426,7 @@ function attachModelPicker(input, getModels) {
   const highlight = index => {
     active = index;
     popup.querySelectorAll(".model-option").forEach((node, i) => node.setAttribute("aria-selected", String(i === index)));
-    const node = popup.children[index];
+    const node = popup.querySelectorAll(".model-option")[index];
     if (node) { input.setAttribute("aria-activedescendant", node.id); node.scrollIntoView({ block: "nearest" }); }
   };
   const choose = model => {
@@ -389,20 +438,42 @@ function attachModelPicker(input, getModels) {
     const query = input.value.trim().toLowerCase();
     const models = getModels();
     const terms = query.split(/\s+/).filter(Boolean);
-    const exact = models.some(model => model.id.toLowerCase() === query);
-    items = (exact ? models : models.filter(model => terms.every(term => `${model.id} ${model.name || ""}`.toLowerCase().includes(term)))).slice(0, 80);
+    // An empty field or the current exact ID means "browse": show everything.
+    const browsing = !terms.length || models.some(model => model.id.toLowerCase() === query);
+    const matches = browsing ? models : models.filter(model => terms.every(term => `${model.id} ${model.name || ""}`.toLowerCase().includes(term)));
+    const groups = groupModels(matches, { searching: !browsing });
+    items = groups.flatMap(group => group.models);
     if (!items.length) { popup.innerHTML = `<div class="model-empty">${models.length ? "Нет совпадений — будет использован введённый ID" : "Каталог моделей не загружен"}</div>`; return; }
-    popup.innerHTML = items.map((model, index) => {
-      const badges = [
-        model.input_modalities?.includes("image") ? '<span class="badge">изображения</span>' : "",
-        model.reasoning?.mandatory ? '<span class="badge">reasoning обяз.</span>' : model.supported_parameters?.includes("reasoning") || model.reasoning ? '<span class="badge">reasoning</span>' : "",
-        model.context_length ? `<span class="badge">${Math.round(model.context_length / 1000)}K</span>` : ""
-      ].join("");
-      const price = modelPrice(model);
-      return `<div class="model-option" id="${listId}-${index}" role="option" aria-selected="false" data-index="${index}"><div class="model-option-main"><span class="model-name">${escapeHtml(model.name || model.id)}</span>${price ? `<span class="model-price">${price}</span>` : ""}</div><div class="model-option-sub"><span class="model-id">${escapeHtml(model.id)}</span>${badges}</div></div>`;
+    let index = 0;
+    popup.innerHTML = groups.map(group => {
+      const heading = group.label ? `<div class="model-group" role="presentation">${escapeHtml(group.label)}</div>` : "";
+      return heading + group.models.map(model => renderOption(model, index++)).join("");
     }).join("");
     const selected = items.findIndex(model => model.id === input.value.trim());
     if (selected >= 0) highlight(selected);
+  };
+  const renderOption = (model, index) => {
+    const badges = [
+      model.input_modalities?.includes("image") ? '<span class="badge">изображения</span>' : "",
+      model.reasoning?.mandatory ? '<span class="badge">reasoning обяз.</span>' : model.supported_parameters?.includes("reasoning") || model.reasoning ? '<span class="badge">reasoning</span>' : "",
+      model.context_length ? `<span class="badge">${Math.round(model.context_length / 1000)}K</span>` : ""
+    ].join("");
+    const price = modelPrice(model);
+    const starred = isFavoriteModel(model.id);
+    const starLabel = starred ? "Убрать из избранного" : "Добавить в избранное";
+    return `<div class="model-option" id="${listId}-${index}" role="option" aria-selected="false" data-index="${index}"><div class="model-option-main"><span class="model-name">${escapeHtml(model.name || model.id)}</span>${price ? `<span class="model-price">${price}</span>` : ""}<button type="button" class="model-star${starred ? " on" : ""}" tabindex="-1" title="${starLabel} (Ctrl+S)" aria-label="${starLabel}" aria-pressed="${starred}">${icon("star")}</button></div><div class="model-option-sub"><span class="model-id">${escapeHtml(model.id)}</span>${badges}</div></div>`;
+  };
+  // Re-render in place (after a star toggle) without losing scroll or the active row.
+  const refresh = () => {
+    if (!isOpen()) return;
+    const scroll = popup.scrollTop, activeId = items[active]?.id;
+    render();
+    popup.scrollTop = scroll;
+    const restored = items.findIndex(model => model.id === activeId);
+    if (restored >= 0) {
+      active = restored;
+      popup.querySelectorAll(".model-option").forEach((node, i) => node.setAttribute("aria-selected", String(i === restored)));
+    }
   };
   const open = () => { if (!input.isConnected) return; if (!isOpen()) document.body.append(popup); render(); place(); input.setAttribute("aria-expanded", "true"); };
 
@@ -422,13 +493,21 @@ function attachModelPicker(input, getModels) {
       else { close(); input.dispatchEvent(new Event("change", { bubbles: true })); }
     } else if (event.key === "Escape" && isOpen()) {
       event.preventDefault(); event.stopPropagation(); close();
+    } else if ((event.ctrlKey || event.metaKey) && event.code === "KeyS" && isOpen()) {
+      event.preventDefault();
+      toggleFavoriteModel(items[active]?.id);
     }
   });
   popup.addEventListener("mousedown", event => {
     event.preventDefault();
     const option = event.target.closest(".model-option");
-    if (option) choose(items[Number(option.dataset.index)]);
+    if (!option) return;
+    const model = items[Number(option.dataset.index)];
+    if (event.target.closest(".model-star")) toggleFavoriteModel(model.id);
+    else choose(model);
   });
   window.addEventListener("resize", () => { if (isOpen()) place(); });
-  return { close, refresh: () => { if (isOpen()) render(); } };
+  const picker = { close, refresh };
+  modelPickers.add(picker);
+  return picker;
 }

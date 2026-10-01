@@ -34,7 +34,7 @@ let modelCatalog = [];
 const ids = ["apiProvider", "apiServer", "apiKey", "defaultPromptModel", "quickModel", "systemPrompt", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "showRub", "rubDisplay", "rubRateSource", "rubManualRate"];
 const byId = id => document.getElementById(id);
 
-const IMPORTABLE_KEYS = new Set([...ids, "apiModel", "menuItems", "recentModels"]);
+const IMPORTABLE_KEYS = new Set([...ids, "apiModel", "menuItems", "recentModels", "favoriteModels"]);
 
 document.addEventListener("DOMContentLoaded", loadSettings);
 

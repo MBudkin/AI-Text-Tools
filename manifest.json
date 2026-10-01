@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "AI Text Tools",
   "description": "Быстрые AI-запросы по выделению, странице и изображениям с потоковым ответом.",
-  "version": "6.9.0",
+  "version": "6.10.0",
   "permissions": ["contextMenus", "storage", "unlimitedStorage", "activeTab", "scripting", "sidePanel", "tabs", "alarms"],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
