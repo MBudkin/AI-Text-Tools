@@ -169,11 +169,15 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .md img { max-width: 100%; height: auto; border-radius: 8px; }
 .md code { padding: 1px 5px; border-radius: 5px; color: var(--inline-code-text); background: var(--inline-code-bg); font: .92em/1.45 var(--mono); white-space: break-spaces; }
 .md pre { max-width: 100%; margin: 0; padding: 10px 12px; overflow: auto; color: var(--code-text); background: transparent; font: 12px/1.55 var(--mono); font-variant-ligatures: none; }
-.md pre code { padding: 0; color: inherit; background: transparent; font: inherit; white-space: pre; }
+.md pre, .md pre code { white-space: pre; overflow-wrap: normal; word-break: normal; }
+.md pre code { padding: 0; color: inherit; background: transparent; font: inherit; }
+:root[data-code-wrap="true"] .md pre, :root[data-code-wrap="true"] .md pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .md .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 3px 0; }
 .code-wrap, .table-wrap { position: relative; max-width: 100%; margin: .7em 0; overflow: hidden; border: 1px solid var(--code-border); border-radius: var(--radius); }
 .code-wrap { background: var(--code-bg); }
 .block-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; padding: 0 4px 0 11px; border-bottom: 1px solid var(--code-border); color: var(--text-3); background: color-mix(in srgb, var(--code-bg) 70%, var(--surface-3)); font: 11px/1 var(--mono); }
+.block-actions { display: flex; flex-shrink: 0; align-items: center; gap: 2px; }
+.code-wrap-toggle[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 .table-scroll { max-width: 100%; overflow: auto; }
 .md table { width: max-content; min-width: 100%; border-collapse: collapse; }
 .md th, .md td { max-width: 320px; padding: 6px 9px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }

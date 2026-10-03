@@ -21,6 +21,7 @@ const DEFAULTS = {
   recentChatsLimit: 6,
   sendOnEnter: true,
   theme: "system",
+  codeWrap: false,
   showRub: false,
   rubDisplay: "both",
   rubRateSource: "cbr",
@@ -35,7 +36,7 @@ const DEFAULTS = {
 let menuItems = [];
 let recentModels = [];
 let modelCatalog = [];
-const ids = ["apiProvider", "apiServer", "apiKey", "defaultPromptModel", "quickModel", "systemPrompt", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "showRub", "rubDisplay", "rubRateSource", "rubManualRate", "rubInChat", "rubInPopup", "rubInHistory", "rubInModels"];
+const ids = ["apiProvider", "apiServer", "apiKey", "defaultPromptModel", "quickModel", "systemPrompt", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "codeWrap", "showRub", "rubDisplay", "rubRateSource", "rubManualRate", "rubInChat", "rubInPopup", "rubInHistory", "rubInModels"];
 const byId = id => document.getElementById(id);
 
 const IMPORTABLE_KEYS = new Set([...ids, "apiModel", "menuItems", "recentModels", "favoriteModels"]);
@@ -137,8 +138,9 @@ async function renderModelsStatus() {
   }
 }
 
-// The background refreshes the catalog daily; pick it up without a reload.
+// Pick up code wrapping and daily catalog updates from other open windows.
 chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "sync" && changes.codeWrap) byId("codeWrap").checked = changes.codeWrap.newValue === true;
   if (areaName !== "local" || !(changes.openRouterModels || changes.openRouterModelsError)) return;
   if (changes.openRouterModels) { modelCatalog = changes.openRouterModels.newValue || []; renderRecentModels(); updateModelCapabilities(); }
   renderModelsStatus();
@@ -220,6 +222,7 @@ function collectSettings() {
     recentChatsLimit: number("recentChatsLimit", 0, 20),
     enableCaching: byId("enableCaching").checked, cacheTtl: number("cacheTtl", 1, 86400),
     sendOnEnter: byId("sendOnEnter").value === "true", theme: byId("theme").value,
+    codeWrap: byId("codeWrap").checked,
     showRub: byId("showRub").checked, rubDisplay: byId("rubDisplay").value, rubRateSource: byId("rubRateSource").value,
     rubInChat: byId("rubInChat").checked, rubInPopup: byId("rubInPopup").checked, rubInHistory: byId("rubInHistory").checked, rubInModels: byId("rubInModels").checked,
     rubManualRate: byId("rubRateSource").value === "manual" ? number("rubManualRate", 1, 10000) : Number(byId("rubManualRate").value) || DEFAULTS.rubManualRate,

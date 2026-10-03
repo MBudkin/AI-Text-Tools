@@ -56,6 +56,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 const ICONS = {
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  wrap: '<path d="M3 6h18M3 12h14a4 4 0 0 1 0 8h-4"/><path d="m16 17-3 3 3 3M3 18h4"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   edit: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
@@ -322,7 +323,42 @@ function highlightCode(code) {
   code.dataset.highlighted = "1";
 }
 
-// Wraps code blocks and tables with a header row holding a label and a copy button.
+/* ---------- Code line wrapping ---------- */
+
+let codeWrapPreference = false;
+
+function renderCodeWrapButton(button) {
+  const label = codeWrapPreference ? "Выключить перенос строк кода" : "Включить перенос строк кода";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(codeWrapPreference));
+}
+
+function applyCodeWrapPreference(value) {
+  codeWrapPreference = value === true;
+  document.documentElement.dataset.codeWrap = String(codeWrapPreference);
+  document.querySelectorAll(".code-wrap-toggle").forEach(renderCodeWrapButton);
+}
+
+async function toggleCodeWrap(button) {
+  const previous = codeWrapPreference;
+  applyCodeWrapPreference(!previous);
+  try {
+    await chrome.storage.sync.set({ codeWrap: codeWrapPreference });
+  } catch (error) {
+    applyCodeWrapPreference(previous);
+    button.title = "Не удалось сохранить перенос строк. Попробуйте ещё раз.";
+    console.warn("Could not save code wrapping preference", error);
+  }
+}
+
+applyCodeWrapPreference(false);
+chrome.storage.sync.get("codeWrap").then(result => applyCodeWrapPreference(result.codeWrap), () => {});
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "sync" && changes.codeWrap) applyCodeWrapPreference(changes.codeWrap.newValue);
+});
+
+// Wraps code blocks and tables with a header row holding a label and controls.
 function decorateMarkdownBlocks(root, { onCopy } = {}) {
   root.querySelectorAll("pre").forEach(pre => {
     if (pre.parentElement?.classList.contains("code-wrap")) return;
@@ -331,9 +367,14 @@ function decorateMarkdownBlocks(root, { onCopy } = {}) {
     const wrap = document.createElement("div"); wrap.className = "code-wrap";
     const head = document.createElement("div"); head.className = "block-head";
     const label = document.createElement("span"); label.textContent = language;
-    const copy = iconButton("copy", "Копировать код", () => onCopy?.(code?.innerText || pre.innerText));
+    const controls = document.createElement("div"); controls.className = "block-actions";
+    const wrapToggle = iconButton("wrap", "Перенос строк кода", () => toggleCodeWrap(wrapToggle));
+    wrapToggle.classList.add("code-wrap-toggle");
+    renderCodeWrapButton(wrapToggle);
+    const copy = iconButton("copy", "Копировать код", () => onCopy?.(code?.textContent ?? pre.textContent));
     copy.classList.add("block-copy");
-    head.append(label, copy);
+    controls.append(wrapToggle, copy);
+    head.append(label, controls);
     pre.replaceWith(wrap); wrap.append(head, pre);
     highlightCode(code);
   });

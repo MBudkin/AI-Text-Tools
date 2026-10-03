@@ -1,0 +1,16 @@
+.agents/
+.codex/
+.env
+.env.*
+!.env.example
+*settings*.json
+*secrets*.json
+node_modules/
+browser-profile/
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+dist/
+IMPROVEMENT_PLAN.md

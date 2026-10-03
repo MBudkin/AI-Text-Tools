@@ -27,6 +27,7 @@ const DEFAULTS = {
   recentChatsLimit: 6,
   sendOnEnter: true,
   theme: "system",
+  codeWrap: false,
   showRub: false,
   rubDisplay: "both",
   rubRateSource: "cbr",
@@ -148,7 +149,7 @@ async function initializeExtension() {
   if (!stored.defaultPromptModel) migration.defaultPromptModel = stored.apiModel || DEFAULTS.defaultPromptModel;
   if (!stored.quickModel) migration.quickModel = stored.apiModel || DEFAULTS.quickModel;
   if (!stored.menuItems || !stored.menuItems.length) migration.menuItems = DEFAULT_MENU_ITEMS;
-  for (const key of ["apiProvider", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "showRub", "rubDisplay", "rubRateSource", "rubManualRate", "rubInChat", "rubInPopup", "rubInHistory", "rubInModels"]) {
+  for (const key of ["apiProvider", "defaultThinking", "quickThinking", "defaultReasoningMaxTokens", "quickReasoningMaxTokens", "chatWindowWidth", "chatWindowCompactWidth", "rememberChatWindowWidth", "sidePanelTabBehavior", "pageSummaryPrompt", "pageContextLimit", "enableCaching", "cacheTtl", "historyLimit", "recentChatsLimit", "sendOnEnter", "theme", "codeWrap", "showRub", "rubDisplay", "rubRateSource", "rubManualRate", "rubInChat", "rubInPopup", "rubInHistory", "rubInModels"]) {
     if (typeof stored[key] === "undefined") migration[key] = DEFAULTS[key];
   }
   if (Object.keys(migration).length) await storageSet("sync", migration);
